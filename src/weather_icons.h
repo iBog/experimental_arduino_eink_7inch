@@ -62,7 +62,12 @@ const unsigned char rain_16x16_bits[] = {
     0x0C, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-const unsigned char* large_weather_icons[][2] = {
+struct WeatherIcon {
+    const char* code;
+    const unsigned char* data;
+};
+
+const WeatherIcon large_weather_icons[] = {
     {"01d", sun_32x32_bits},
     {"01n", sun_32x32_bits}, // Assuming sun for night clear sky for simplicity
     {"02d", cloud_32x32_bits},
@@ -78,7 +83,7 @@ const unsigned char* large_weather_icons[][2] = {
     // Add other icons as needed
 };
 
-const unsigned char* small_weather_icons[][2] = {
+const WeatherIcon small_weather_icons[] = {
     {"01d", sun_16x16_bits},
     {"01n", sun_16x16_bits},
     {"02d", cloud_16x16_bits},
@@ -93,3 +98,24 @@ const unsigned char* small_weather_icons[][2] = {
     {"10n", rain_16x16_bits}
     // Add other icons as needed
 };
+
+// Function to get weather icon by code and size
+const unsigned char* getWeatherIcon(const String& iconCode, bool large) {
+    if (large) {
+        int count = sizeof(large_weather_icons) / sizeof(large_weather_icons[0]);
+        for (int i = 0; i < count; i++) {
+            if (strcmp(large_weather_icons[i].code, iconCode.c_str()) == 0) {
+                return large_weather_icons[i].data;
+            }
+        }
+    } else {
+        int count = sizeof(small_weather_icons) / sizeof(small_weather_icons[0]);
+        for (int i = 0; i < count; i++) {
+            if (strcmp(small_weather_icons[i].code, iconCode.c_str()) == 0) {
+                return small_weather_icons[i].data;
+            }
+        }
+    }
+    // Return sun icon as default if icon not found
+    return large ? sun_32x32_bits : sun_16x16_bits;
+}

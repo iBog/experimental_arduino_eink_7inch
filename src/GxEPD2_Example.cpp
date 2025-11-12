@@ -104,7 +104,7 @@ void parseWeather(String json) {
     JsonDocument doc;
     deserializeJson(doc, json);
     double temp_val = doc["main"]["temp"];
-    currentWeather.temperature = String(temp_val, 0) + "°";
+    currentWeather.temperature = String(temp_val, 0) + "°C";
     currentWeather.description = doc["weather"][0]["description"].as<String>();
     currentWeather.icon = doc["weather"][0]["icon"].as<String>();
 }
@@ -134,7 +134,7 @@ void parseForecast(String json) {
             strftime(day_buf, sizeof(day_buf), "%d", &forecast_timeinfo);
             
             forecastList[day_index].dayOfMonth = String(day_buf);
-            forecastList[day_index].temp = String(list[i]["main"]["temp"].as<double>(), 0) + "°";
+            forecastList[day_index].temp = String(list[i]["main"]["temp"].as<double>(), 0) + "°C";
             forecastList[day_index].icon = list[i]["weather"][0]["icon"].as<String>();
             day_index++;
         }
