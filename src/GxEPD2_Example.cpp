@@ -26,7 +26,7 @@
 #include <time.h>
 
 // LANGUAGE SELECTION
-const char* language = "ru"; // "en" or "ru"
+const char* language = "en"; // "en" or "ru"
 
 // --- LANGUAGE STRINGS ---
 struct LangStrings {
