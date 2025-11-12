@@ -124,7 +124,7 @@ void parseWeather(String json) {
     deserializeJson(doc, json);
     double temp_val = doc["main"]["temp"];
     // Use the degree symbol in a way that works with both locales
-    currentWeather.temperature = String(temp_val, 0) + " C"; // Use 'C' only to avoid encoding issues with Russian locale
+    currentWeather.temperature = String(temp_val, 0) + "\xB0" + "C"; // Using hex code for degree symbol
     currentWeather.description = doc["weather"][0]["description"].as<String>();
     currentWeather.icon = doc["weather"][0]["icon"].as<String>();
 }
@@ -154,7 +154,7 @@ void parseForecast(String json) {
             strftime(day_buf, sizeof(day_buf), "%d", &forecast_timeinfo);
             
             forecastList[day_index].dayOfMonth = String(day_buf);
-            forecastList[day_index].temp = String(list[i]["main"]["temp"].as<double>(), 0) + "C"; // Use 'C' only to avoid encoding issues with Russian locale
+            forecastList[day_index].temp = String(list[i]["main"]["temp"].as<double>(), 0) + "\xB0" + "C"; // Using hex code for degree symbol
             forecastList[day_index].icon = list[i]["weather"][0]["icon"].as<String>();
             day_index++;
         }
@@ -199,8 +199,8 @@ void drawWeather(const String& city, const CurrentWeather& weather) {
     display.print(weather.temperature);
     display.setTextColor(GxEPD_BLACK);
 
-    const unsigned char* icon = getWeatherIcon(weather.icon, true); // Use large icons (32x32)
-    display.drawXBitmap(((400 - 32) / 2), 140, icon, 32, 32, GxEPD_BLACK);
+    const unsigned char* icon = getWeatherIcon(weather.icon, false, true); // Use extra large (64x64)
+    display.drawXBitmap(((400 - 64) / 2), 140, icon, 64, 64, GxEPD_BLACK);
 
     display.setFont(&TimesNRCyr12pt8b);
     display.getTextBounds(weather.description, 0, 0, &tbx, &tby, &tbw, &tbh);
@@ -209,35 +209,23 @@ void drawWeather(const String& city, const CurrentWeather& weather) {
 }
 
 void drawTime(struct tm& timeinfo) {
-    const char* day_name;
-    if (strcmp(language, "ru") == 0) {
-        day_name = day_names_ru[timeinfo.tm_wday];
-    } else {
-        day_name = day_names_en[timeinfo.tm_wday];
-    }
-
-    // Format date with translated month
-    const char* month_name;
-    if (strcmp(language, "ru") == 0) {
-        month_name = month_names_ru[timeinfo.tm_mon];
-    } else {
-        month_name = month_names_en[timeinfo.tm_mon];
-    }
-    
     char date_buffer[64];
-    sprintf(date_buffer, "%d, %s, %d", timeinfo.tm_mday, month_name, timeinfo.tm_year + 1900);
+    strftime(date_buffer, sizeof(date_buffer), "%d %B %Y", &timeinfo);
+    
+    char day_buffer[64];
+    strftime(day_buffer, sizeof(day_buffer), "%A", &timeinfo);
 
     int16_t tbx, tby;
     uint16_t tbw, tbh;
     display.setFont(&TimesNRCyr12pt8b);
-
+    
     display.getTextBounds(date_buffer, 0, 0, &tbx, &tby, &tbw, &tbh);
     display.setCursor((400 - tbw) / 2, 340);
     display.print(date_buffer);
 
-    display.getTextBounds(day_name, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.getTextBounds(day_buffer, 0, 0, &tbx, &tby, &tbw, &tbh);
     display.setCursor((400 - tbw) / 2, 370);
-    display.print(day_name);
+    display.print(day_buffer);
 }
 
 void drawCalendar(struct tm& timeinfo) {
@@ -251,11 +239,9 @@ void drawCalendar(struct tm& timeinfo) {
     int16_t tbx, tby;
     uint16_t tbw, tbh;
     display.setFont(&TimesNRCyr12pt8b);
-    
-    // Draw month title centered on right side
     display.getTextBounds(month_name, 0, 0, &tbx, &tby, &tbw, &tbh);
-    display.setTextColor(GxEPD_RED);
     display.setCursor(400 + (400 - tbw) / 2, 40);
+    display.setTextColor(GxEPD_RED);
     display.print(month_name);
     display.setTextColor(GxEPD_BLACK);
 
@@ -289,26 +275,14 @@ void drawCalendar(struct tm& timeinfo) {
             int x = 420 + col * 50;
             int y = 110 + row * 25;
             
-            display.setFont(&CourierCyr9pt8b);
-
-            // Check if current day is a weekend day (Saturday or Sunday)
-            // col 0-6 represents Monday-Sunday, so weekend is col 5 (Saturday) and col 6 (Sunday)
-            bool isWeekend = (col == 5 || col == 6); // Saturday or Sunday
-            
-            if (isWeekend) {
-                // For weekend days, draw text multiple times to create a bold effect
-                // Draw the text multiple times in slightly different positions
-                for (int offset_x = 0; offset_x <= 1; offset_x++) {
-                    for (int offset_y = 0; offset_y <= 1; offset_y++) {
-                        display.setCursor(x + offset_x, y + offset_y);
-                        display.print(day);
-                    }
-                }
+            if (col >= 5) {
+                display.setFont(&CourierCyr9pt8b);
             } else {
-                // For regular days, draw normal text
-                display.setCursor(x, y);
-                display.print(day);
+                display.setFont(&CourierCyr9pt8b);
             }
+
+            display.setCursor(x, y);
+            display.print(day);
 
             if (day == today) {
                 display.drawRect(x - 5, y - 15, 30, 20, GxEPD_RED);
@@ -322,18 +296,12 @@ void drawForecast() {
     int16_t tbx, tby;
     uint16_t tbw, tbh;
     display.setFont(&TimesNRCyr12pt8b);
-    
-    // Draw top divider line
-    display.fillRect(20, 380, 360, 2, GxEPD_BLACK);
-    
-    // Draw forecast title centered
-    display.getTextBounds(s->forecast, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.fillRect(20, 380, 360, 2, GxEPD_BLACK); // Divider line above forecast header
     display.setTextColor(GxEPD_RED); // Make forecast header red like other headers
+    display.getTextBounds(s->forecast, 0, 0, &tbx, &tby, &tbw, &tbh);
     display.setCursor((400 - tbw) / 2, 400);
     display.print(s->forecast);
     display.setTextColor(GxEPD_BLACK); // Reset to black for the rest of the content
-    
-    // Draw bottom divider line
     display.fillRect(20, 420, 360, 2, GxEPD_BLACK);
 
     for (int i = 0; i < 5; i++) {
@@ -355,20 +323,15 @@ void drawForecast() {
 
 void drawEvents() {
     display.setFont(&TimesNRCyr12pt8b);
-    
-    // Draw top divider line
-    display.fillRect(420, 260, 360, 2, GxEPD_BLACK);
-    
-    // Draw events title centered on right side
+    display.setTextColor(GxEPD_RED);
     int16_t tbx, tby;
     uint16_t tbw, tbh;
     display.getTextBounds(s->events, 0, 0, &tbx, &tby, &tbw, &tbh);
-    display.setTextColor(GxEPD_RED);
     display.setCursor(400 + (400 - tbw) / 2, 280);
     display.print(s->events);
     display.setTextColor(GxEPD_BLACK);
     
-    // Draw bottom divider line
+    display.fillRect(420, 260, 360, 2, GxEPD_BLACK);
     display.fillRect(420, 290, 360, 2, GxEPD_BLACK);
 
     display.setFont(&CourierCyr9pt8b);
