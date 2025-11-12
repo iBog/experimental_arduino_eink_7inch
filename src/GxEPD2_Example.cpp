@@ -20,11 +20,23 @@
 #include <Fonts/TimesNRCyr8.h>
 #include <Fonts/TimesNRCyr9.h>
 #include <Fonts/timesnrcyr6.h>
+#include <Fonts/FreeSans24pt7b.h>
 #include <GxEPD2_3C.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <time.h>
 
+// WiFi and API credentials
+String apiKey = "99fc51e4e132d3e0a465294f293ad82a";
+String city = "Wroclaw";
+String weatherUrl = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "&appid=" + apiKey + "&units=metric&lang=" + language;
+String forecastUrl = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&appid=" + apiKey + "&units=metric&lang=" + language;
+
+const char* ssid = "wifi_name";
+const char* password = "wifi_password";
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 1 * 3600; // GMT+1 for Wroclaw
+const int daylightOffset_sec = 3600;
 // LANGUAGE SELECTION
 const char* language = "en"; // "en" or "ru"
 
@@ -40,14 +52,14 @@ const LangStrings enStrings = {
     "Forecast",
     "Events",
     { "M", "T", "W", "T", "F", "S", "S" },
-    "Updated at: %H:%M"
+    "Updated: %d.%m.%Y %H:%M"
 };
 
 const LangStrings ruStrings = {
     "Прогноз",
     "События",
     { "П", "В", "С", "Ч", "П", "С", "В" },
-    "Обновлено: %H:%M"
+    "Обновлено: %d.%m.%Y %H:%M"
 };
 
 const LangStrings* s = &enStrings; // Pointer to current language strings
@@ -70,18 +82,6 @@ const char* day_names_en[7] = {
 const char* day_names_ru[7] = {
     "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"
 };
-
-// WiFi and API credentials
-String apiKey = "99fc51e4e132d3e0a465294f293ad82a";
-String city = "Wroclaw";
-String weatherUrl = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "&appid=" + apiKey + "&units=metric&lang=" + language;
-String forecastUrl = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&appid=" + apiKey + "&units=metric&lang=" + language;
-
-const char* ssid = "bogswifi";
-const char* password = "bog12345";
-const char* ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 1 * 3600; // GMT+1 for Wroclaw
-const int daylightOffset_sec = 3600;
 
 // E-paper display pins
 #define EPD_MOSI 11
@@ -198,11 +198,9 @@ void drawWeather(const String& city, const CurrentWeather& weather)
     display.setCursor((400 - tbw) / 2, 20);
     display.print(city);
 
-    display.setTextSize(3);
     display.setTextColor(GxEPD_RED);
     // Use draw_temp function for temperature with Celsius mark (moved up)
-    draw_temp((400 - 100) / 2, 90, 2, currentWeather.temperature.toFloat(), &TimesNRCyr12pt8b); // Increased circle size from 3 to 4
-    display.setTextSize(1);
+    draw_temp((400 - 100) / 2, 90, 4, currentWeather.temperature.toFloat(), &FreeSans24pt7b); // Increased circle size from 2 to 4
     display.setTextColor(GxEPD_BLACK);
 
     // Use vector weather icon instead of bitmap (moved up)
@@ -331,8 +329,8 @@ void drawForecast(struct tm& timeinfo)
     int16_t tbx, tby;
     uint16_t tbw, tbh;
 
-    // Add "Updated at" text
-    char time_buffer[32];
+    // Add "Updated at" text with full date
+    char time_buffer[64];
     strftime(time_buffer, sizeof(time_buffer), s->updatedAt, &timeinfo);
 
     display.setFont(&TimesNRCyr7pt8b); // Using a small font
@@ -442,12 +440,14 @@ void setup()
     display.setRotation(0);
 
     drawDashboard();
-
-    Serial.println("Setup complete.");
+    
+    // Put ESP32 into deep sleep for 5 hours (5 * 60 * 60 * 1,000,000 microseconds)
+    Serial.println("Entering deep sleep for 5 hours...");
+    esp_sleep_enable_timer_wakeup(5 * 60 * 60 * 1000000ULL); // 5 hours in microseconds
+    esp_deep_sleep_start();
 }
 
 void loop()
 {
-    drawDashboard();
-    delay(30 * 60 * 1000);
+    // Empty loop - everything happens in setup() due to deep sleep
 }
