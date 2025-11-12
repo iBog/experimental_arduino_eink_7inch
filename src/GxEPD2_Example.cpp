@@ -34,18 +34,21 @@ struct LangStrings {
     const char* forecast;
     const char* events;
     const char* dayLetters[7];
+    const char* updatedAt;
 };
 
 const LangStrings enStrings = {
     "Forecast",
     "Events",
-    {"M", "T", "W", "T", "F", "S", "S"}
+    {"M", "T", "W", "T", "F", "S", "S"},
+    "Updated at: %H:%M"
 };
 
 const LangStrings ruStrings = {
     "Прогноз",
     "События",
-    {"П", "В", "С", "Ч", "П", "С", "В"}
+    {"П", "В", "С", "Ч", "П", "С", "В"},
+    "Обновлено: %H:%M"
 };
 
 const LangStrings* s = &enStrings; // Pointer to current language strings
@@ -204,7 +207,7 @@ void drawWeather(const String& city, const CurrentWeather& weather) {
 
     display.setFont(&TimesNRCyr12pt8b);
     display.getTextBounds(weather.description, 0, 0, &tbx, &tby, &tbw, &tbh);
-    display.setCursor((400 - tbw) / 2, 300);
+    display.setCursor((400 - tbw) / 2, 270);
     display.print(weather.description);
 }
 
@@ -232,11 +235,11 @@ void drawTime(struct tm& timeinfo) {
     display.setFont(&TimesNRCyr12pt8b);
 
     display.getTextBounds(date_buffer, 0, 0, &tbx, &tby, &tbw, &tbh);
-    display.setCursor((400 - tbw) / 2, 340);
+    display.setCursor((400 - tbw) / 2, 300);
     display.print(date_buffer);
 
     display.getTextBounds(day_name, 0, 0, &tbx, &tby, &tbw, &tbh);
-    display.setCursor((400 - tbw) / 2, 370);
+    display.setCursor((400 - tbw) / 2, 330);
     display.print(day_name);
 }
 
@@ -318,9 +321,19 @@ void drawCalendar(struct tm& timeinfo) {
     }
 }
 
-void drawForecast() {
+void drawForecast(struct tm& timeinfo) {
     int16_t tbx, tby;
     uint16_t tbw, tbh;
+
+    // Add "Updated at" text
+    char time_buffer[32];
+    strftime(time_buffer, sizeof(time_buffer), s->updatedAt, &timeinfo);
+
+    display.setFont(&TimesNRCyr7pt8b); // Using a small font
+    display.getTextBounds(time_buffer, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.setCursor(20, 375); // Position it on the left, above the forecast line
+    display.print(time_buffer);
+
     display.setFont(&TimesNRCyr12pt8b);
     
     // Draw top divider line
@@ -393,7 +406,7 @@ void drawDashboard() {
         
         drawWeather(city, currentWeather);
         drawTime(timeinfo);
-        drawForecast();
+        drawForecast(timeinfo);
         drawCalendar(timeinfo);
         drawEvents();
 
