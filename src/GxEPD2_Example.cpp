@@ -1,319 +1,367 @@
 #include <Adafruit_GFX.h>
-
 #include <Arduino.h>
-
 #include <ArduinoJson.h>
-
-#include <Fonts/FreeMonoBold12pt7b.h>
-
-#include <Fonts/FreeMonoBold9pt7b.h>
-
+#include <Fonts/CourierCyr10.h>
+#include <Fonts/CourierCyr12.h>
+#include <Fonts/CourierCyr14.h>
+#include <Fonts/CourierCyr16.h>
+#include <Fonts/CourierCyr18.h>
+#include <Fonts/CourierCyr6.h>
+#include <Fonts/CourierCyr7.h>
+#include <Fonts/CourierCyr8.h>
+#include <Fonts/CourierCyr9.h>
+#include <Fonts/TimesNRCyr10.h>
+#include <Fonts/TimesNRCyr12.h>
+#include <Fonts/TimesNRCyr14.h>
+#include <Fonts/TimesNRCyr16.h>
+#include <Fonts/TimesNRCyr18.h>
+#include <Fonts/timesnrcyr6.h>
+#include <Fonts/TimesNRCyr7.h>
+#include <Fonts/TimesNRCyr8.h>
+#include <Fonts/TimesNRCyr9.h>
 #include <GxEPD2_3C.h>
-
 #include <HTTPClient.h>
-
 #include <WiFi.h>
-
 #include <time.h>
+#include "weather_icons.h"
+
+// LANGUAGE SELECTION
+const char* language = "ru"; // "en" or "ru"
 
 
+// --- LANGUAGE STRINGS ---
+struct LangStrings {
+    const char* forecast;
+    const char* events;
+    const char* dayLetters[7];
+};
 
+const LangStrings enStrings = {
+    "Forecast",
+    "Events",
+    {"M", "T", "W", "T", "F", "S", "S"}
+};
+
+const LangStrings ruStrings = {
+    "Прогноз",
+    "События",
+    {"П", "В", "С", "Ч", "П", "С", "В"}
+};
+
+const LangStrings* s = &enStrings; // Pointer to current language strings
+
+// WiFi and API credentials
 String apiKey = "99fc51e4e132d3e0a465294f293ad82a";
-
-String city = "Minsk";
-
-String url = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "&appid=" + apiKey + "&units=metric";
-
-
+String city = "Wroclaw";
+String weatherUrl = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "&appid=" + apiKey + "&units=metric&lang=" + language;
+String forecastUrl = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&appid=" + apiKey + "&units=metric&lang=" + language;
 
 const char* ssid = "bogswifi";
-
 const char* password = "bog12345";
-
 const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 1 * 3600; // GMT+1 for Wroclaw
+const int daylightOffset_sec = 3600;
 
-const long gmtOffset_sec = 3 * 3600; // adjust for your timezone (GMT+3 for Minsk)
-
-const int daylightOffset_sec = 0; // daylight saving offset if needed
-
-
-
-// Пины подключения к DESPI-C02
-
-#define EPD_MOSI 11 // SOI
-
-#define EPD_SCK 12 // SCK
-
-#define EPD_CS 10 // CS
-
-#define EPD_DC 18 // DC
-
-#define EPD_RST 17 // RESET
-
-#define EPD_BUSY 16 // BUSY
-
-
-
-// Объявляем объект дисплея (3-цветный, 800x480)
-
-// // Объявление с буфером в PSRAM
-
-// GxEPD2_3C<GxEPD2_800x480, GxEPD2_800x480::HEIGHT> display(
-
-//   GxEPD2_800x480(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY,
-
-//                  /*enableDiagnostic=*/ true,
-
-//                  /*usePartialUpdateWindow=*/ false,
-
-//                  /*useFastFullUpdate=*/ true,
-
-//                  /*usePartialUpdate=*/ true,
-
-//                  /*usePagedUpdate=*/ false)
-
-// );
+// E-paper display pins
+#define EPD_MOSI 11
+#define EPD_SCK 12
+#define EPD_CS 10
+#define EPD_DC 18
+#define EPD_RST 17
+#define EPD_BUSY 16
 
 GxEPD2_3C<GxEPD2_750c_Z08, GxEPD2_750c_Z08::HEIGHT / 4> display(GxEPD2_750c_Z08(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 
-// GDEW075Z08 800x480, GD7965
+struct CurrentWeather {
+    String temperature;
+    String description;
+    String icon;
+};
+
+struct Forecast {
+    String dayOfMonth;
+    String temp;
+    String icon;
+};
+
+struct Event {
+    String time;
+    String title;
+};
+
+CurrentWeather currentWeather;
+Forecast forecastList[5];
+Event eventList[] = {
+    {"14:00", "Встреча"},
+    {"19:00", "Кино"},
+    {"22:00", "Друзья"}
+};
 
 
 
-String weatherText = "";
 
-String tempText = "";
-
-void parseWeather(String json)
-
-{
-
-    DynamicJsonDocument doc(1024);
-
+void parseWeather(String json) {
+    JsonDocument doc;
     deserializeJson(doc, json);
-
-    float temp = doc["main"]["temp"];
-
-    const char* desc = doc["weather"][0]["description"];
-
-    tempText = "Temp: " + String(temp, 1) + " C";
-
-    weatherText = String(desc);
-
+    double temp_val = doc["main"]["temp"];
+    currentWeather.temperature = String(temp_val, 0) + "°";
+    currentWeather.description = doc["weather"][0]["description"].as<String>();
+    currentWeather.icon = doc["weather"][0]["icon"].as<String>();
 }
 
+void parseForecast(String json) {
+    JsonDocument doc;
+    deserializeJson(doc, json);
+    JsonArray list = doc["list"];
 
+    time_t now;
+    struct tm* timeinfo;
+    time(&now);
+    timeinfo = localtime(&now);
+    int today_yday = timeinfo->tm_yday;
 
-String getWeather()
+    int day_index = 0;
+    int last_day = -1;
 
-{
+    for (int i = 0; i < list.size() && day_index < 5; i++) {
+        long timestamp = list[i]["dt"];
+        struct tm forecast_timeinfo;
+        gmtime_r(&timestamp, &forecast_timeinfo);
 
-    HTTPClient http;
-
-    http.begin(url);
-
-    int httpCode = http.GET();
-
-    String payload = "";
-
-    if (httpCode == 200) {
-
-        payload = http.getString();
-
+        if (forecast_timeinfo.tm_yday != today_yday && forecast_timeinfo.tm_yday != last_day) {
+            last_day = forecast_timeinfo.tm_yday;
+            char day_buf[3];
+            strftime(day_buf, sizeof(day_buf), "%d", &forecast_timeinfo);
+            
+            forecastList[day_index].dayOfMonth = String(day_buf);
+            forecastList[day_index].temp = String(list[i]["main"]["temp"].as<double>(), 0) + "°";
+            forecastList[day_index].icon = list[i]["weather"][0]["icon"].as<String>();
+            day_index++;
+        }
     }
+}
 
+void fetchWeatherData() {
+    HTTPClient http;
+    http.begin(weatherUrl);
+    int httpCode = http.GET();
+    if (httpCode == 200) parseWeather(http.getString());
     http.end();
 
-    return payload;
-
+    http.begin(forecastUrl);
+    httpCode = http.GET();
+    if (httpCode == 200) parseForecast(http.getString());
+    http.end();
 }
 
-
-
-String getTimeString()
-
-{
-
-    struct tm timeinfo;
-
-    if (!getLocalTime(&timeinfo)) {
-
-        return "Time: Error";
-
-    }
-
-    char buf[32];
-
-    strftime(buf, sizeof(buf), "%H:%M:%S", &timeinfo);
-
-    return "Time: " + String(buf);
-
-}
-
-
-
-void connectWiFi()
-
-{
-
+void connectWiFi() {
     WiFi.begin(ssid, password);
-
     while (WiFi.status() != WL_CONNECTED) {
-
         delay(500);
-
         Serial.print(".");
-
     }
-
     Serial.println("WiFi connected");
-
 }
 
+void drawWeather(const String& city, const CurrentWeather& weather) {
+    int16_t tbx, tby;
+    uint16_t tbw, tbh;
 
+    display.setFont(&TimesNRCyr12pt8b);
+    display.getTextBounds(city, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.setCursor((400 - tbw) / 2, 40);
+    display.print(city);
 
-void setup()
+    display.setFont(&TimesNRCyr18pt8b);
+    display.setTextColor(GxEPD_RED);
+    display.getTextBounds(weather.temperature, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.setCursor((400 - tbw) / 2, 120);
+    display.print(weather.temperature);
+    display.setTextColor(GxEPD_BLACK);
 
-{
+    const unsigned char* icon = getWeatherIcon(weather.icon, true);
+    display.drawXBitmap(((400 - 32) / 2), 140, icon, 32, 32, GxEPD_BLACK);
 
-    Serial.begin(115200);
+    display.setFont(&TimesNRCyr12pt8b);
+    display.getTextBounds(weather.description, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.setCursor((400 - tbw) / 2, 300);
+    display.print(weather.description);
+}
 
-    Serial.println("Init e-paper...");
+void drawTime(struct tm& timeinfo) {
+    char date_buffer[64];
+    strftime(date_buffer, sizeof(date_buffer), "%d %B %Y", &timeinfo);
+    
+    char day_buffer[64];
+    strftime(day_buffer, sizeof(day_buffer), "%A", &timeinfo);
 
-    String textFlash = "Flash: " + String(ESP.getFlashChipSize() / 1024 / 1024) + " MB";
+    int16_t tbx, tby;
+    uint16_t tbw, tbh;
+    display.setFont(&TimesNRCyr12pt8b);
+    
+    display.getTextBounds(date_buffer, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.setCursor((400 - tbw) / 2, 340);
+    display.print(date_buffer);
 
-    String textPsRam = "PSRAM: " + String(ESP.getPsramSize() / 1024 / 1024) + " MB";
+    display.getTextBounds(day_buffer, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.setCursor((400 - tbw) / 2, 370);
+    display.print(day_buffer);
+}
 
-    Serial.println(textFlash);
+void drawCalendar(struct tm& timeinfo) {
+    char month_name[32];
+    strftime(month_name, sizeof(month_name), "%B", &timeinfo);
 
-    Serial.println(textPsRam);
+    int16_t tbx, tby;
+    uint16_t tbw, tbh;
+    display.setFont(&TimesNRCyr12pt8b);
+    display.getTextBounds(month_name, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.setCursor(400 + (400 - tbw) / 2, 40);
+    display.setTextColor(GxEPD_RED);
+    display.print(month_name);
+    display.setTextColor(GxEPD_BLACK);
 
-    connectWiFi();
+    display.fillRect(420, 60, 360, 2, GxEPD_BLACK);
 
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    int month = timeinfo.tm_mon;
+    int year = timeinfo.tm_year + 1900;
+    int today = timeinfo.tm_mday;
 
-    // Fetch weather
+    int daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) {
+        daysInMonth[1] = 29;
+    }
 
-    String json = getWeather();
+    struct tm firstDayOfMonth = {0, 0, 0, 1, month, year - 1900};
+    mktime(&firstDayOfMonth);
+    int startDay = (firstDayOfMonth.tm_wday + 6) % 7;
 
-    parseWeather(json);
+    display.setFont(&CourierCyr9pt8b);
+    for (int i = 0; i < 7; i++) {
+        display.setCursor(420 + i * 50, 80);
+        display.print(s->dayLetters[i]);
+    }
 
-    String timeText = getTimeString();
+    int day = 1;
+    for (int row = 0; row < 6; row++) {
+        for (int col = 0; col < 7; col++) {
+            if ((row == 0 && col < startDay) || day > daysInMonth[month]) {
+                continue;
+            }
+            int x = 420 + col * 50;
+            int y = 110 + row * 25;
+            
+            if (col >= 5) {
+                display.setFont(&CourierCyr9pt8b);
+            } else {
+                display.setFont(&CourierCyr9pt8b);
+            }
 
+            display.setCursor(x, y);
+            display.print(day);
 
+            if (day == today) {
+                display.drawRect(x - 5, y - 15, 30, 20, GxEPD_RED);
+            }
+            day++;
+        }
+    }
+}
 
-    // Инициализация дисплея
+void drawForecast() {
+    int16_t tbx, tby;
+    uint16_t tbw, tbh;
+    display.setFont(&TimesNRCyr12pt8b);
+    display.getTextBounds(s->forecast, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.setCursor((400 - tbw) / 2, 400);
+    display.print(s->forecast);
+    display.fillRect(20, 420, 360, 2, GxEPD_BLACK);
 
-    display.init(115200);
+    for (int i = 0; i < 5; i++) {
+        int x_base = 20 + i * 75;
+        display.setFont(&CourierCyr9pt8b);
+        display.getTextBounds(forecastList[i].dayOfMonth.c_str(), 0, 0, &tbx, &tby, &tbw, &tbh);
+        display.setCursor(x_base + (32 - tbw)/2, 440);
+        display.print(forecastList[i].dayOfMonth);
 
-    display.setRotation(0); // ориентация (0–3)
+        const unsigned char* icon = getWeatherIcon(forecastList[i].icon, false);
+        display.drawXBitmap(x_base, 450, icon, 16, 16, GxEPD_BLACK);
 
+        display.setFont(&CourierCyr9pt8b);
+        display.getTextBounds(forecastList[i].temp.c_str(), 0, 0, &tbx, &tby, &tbw, &tbh);
+        display.setCursor(x_base + (32 - tbw)/2, 475);
+        display.print(forecastList[i].temp);
+    }
+}
 
+void drawEvents() {
+    display.setFont(&TimesNRCyr12pt8b);
+    display.setTextColor(GxEPD_RED);
+    int16_t tbx, tby;
+    uint16_t tbw, tbh;
+    display.getTextBounds(s->events, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.setCursor(400 + (400 - tbw) / 2, 280);
+    display.print(s->events);
+    display.setTextColor(GxEPD_BLACK);
+    
+    display.fillRect(420, 260, 360, 2, GxEPD_BLACK);
+    display.fillRect(420, 290, 360, 2, GxEPD_BLACK);
 
-    // Очистка экрана
+    display.setFont(&CourierCyr9pt8b);
+    for (int i = 0; i < sizeof(eventList) / sizeof(Event); i++) {
+        display.setCursor(420, 320 + i * 30);
+        display.print(eventList[i].time + " " + eventList[i].title);
+    }
+}
+
+void drawDashboard() {
+    fetchWeatherData();
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) {
+        Serial.println("Failed to obtain time");
+        return;
+    }
 
     display.setFullWindow();
-
     display.firstPage();
-
     do {
-
         display.fillScreen(GxEPD_WHITE);
+        
+        drawWeather(city, currentWeather);
+        drawTime(timeinfo);
+        drawForecast();
+        drawCalendar(timeinfo);
+        drawEvents();
 
-
-
-        // display.drawRect(0, 0, 800, 480, GxEPD_BLACK);
-
-        // display.drawRect(5, 5, 790, 470, GxEPD_RED);
-
-
-
-        // Текст
-
-        display.setTextColor(GxEPD_BLACK);
-
-        display.setFont(&FreeMonoBold12pt7b);
-
-        display.setCursor(50, 50);
-
-        display.print("ESP32-S3!");
-
-        display.setCursor(50, 70);
-
-        display.print(textFlash);
-
-        display.setCursor(50, 95);
-
-        display.print(textPsRam);
-
-
-
-        display.setTextColor(GxEPD_RED);
-
-        display.setCursor(50, 115);
-
-        display.print("Red layer text");
-
-
-
-        // Простая графика
-
-        display.drawRect(40, 150, 250, 100, GxEPD_RED);
-
-        // display.drawLine(40, 150, 240, 250, GxEPD_RED);
-
-
-
-        display.setFont(&FreeMonoBold12pt7b);
-
-        display.setTextColor(GxEPD_BLACK);
-
-        display.setCursor(50, 170);
-
-        display.print(tempText);
-
-        display.setCursor(50, 190);
-
-        display.print(weatherText);
-
-        display.setFont(&FreeMonoBold9pt7b);
-
-        display.setTextColor(GxEPD_BLACK);
-
-        display.setCursor(50, 210);
-
-        display.print(timeText);
-
-
+        display.fillRect(398, 0, 4, 480, GxEPD_BLACK);
 
     } while (display.nextPage());
-
-
-
-    Serial.println("Done.");
-
-
-
-    // Обновление только области 200x200 пикселей
-
-    // display.setPartialWindow(100, 100, 200, 200); // x, y, width, height
-
-    // display.fillScreen(GxEPD_WHITE);
-
-    // display.setCursor(120, 150);
-
-    // display.print("Partial Update");
-
-    // display.updateWindow(true); // true = монохромный режим (быстрее)
-
 }
 
+void setup() {
+    Serial.begin(115200);
+    Serial.println("Init e-paper...");
 
+    if (strcmp(language, "ru") == 0) {
+        s = &ruStrings;
+        setlocale(LC_TIME, "ru_RU.UTF-8");
+    } else {
+        s = &enStrings;
+        setlocale(LC_TIME, "en_US.UTF-8");
+    }
 
-void loop()
+    connectWiFi();
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
-{
+    display.init(115200);
+    display.setRotation(0);
 
-    // пусто — дисплей обновляется только в setup()
+    drawDashboard();
 
+    Serial.println("Setup complete.");
+}
+
+void loop() {
+    drawDashboard();
+    delay(30 * 60 * 1000);
 }
