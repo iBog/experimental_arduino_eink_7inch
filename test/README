@@ -1,9 +1,8 @@
 
-## Title
-Weather, Calendar and Events station PlatformIO project
+## Weather, Calendar and Events station PlatformIO project for e-Ink display
 
 * **Board**: ESP32-S3
-* **Display**: XSRUPB FPC-8612, size: 7.5", 800x480, Black, White, Red colors
+* **Display**: XSRUPB FPC-8612, size: 7.5", 800x480, e-Ink, Black, White, Red colors
 * **Display Controller**: DESPI-C02 for ePaper from Good Display
 
 ![Weather station photo](/docs/station_screen_front.jpg "Weather station photo")
