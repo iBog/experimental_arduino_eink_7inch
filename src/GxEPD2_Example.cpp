@@ -26,19 +26,20 @@
 #include <WiFi.h>
 #include <time.h>
 
+// LANGUAGE SELECTION
+const char* language = "en"; // "en" or "ru"
+
 // WiFi and API credentials
 String apiKey = "99fc51e4e132d3e0a465294f293ad82a";
 String city = "Wroclaw";
 String weatherUrl = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "&appid=" + apiKey + "&units=metric&lang=" + language;
 String forecastUrl = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&appid=" + apiKey + "&units=metric&lang=" + language;
 
-const char* ssid = "wifi_name";
-const char* password = "wifi_password";
+const char* ssid = "bogswifi";
+const char* password = "bog12345";
 const char* ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 1 * 3600; // GMT+1 for Wroclaw
+const long gmtOffset_sec = 3 * 3600; // GMT+1 for Minsk
 const int daylightOffset_sec = 3600;
-// LANGUAGE SELECTION
-const char* language = "en"; // "en" or "ru"
 
 // --- LANGUAGE STRINGS ---
 struct LangStrings {
@@ -441,9 +442,9 @@ void setup()
 
     drawDashboard();
     
-    // Put ESP32 into deep sleep for 5 hours (5 * 60 * 60 * 1,000,000 microseconds)
-    Serial.println("Entering deep sleep for 5 hours...");
-    esp_sleep_enable_timer_wakeup(5 * 60 * 60 * 1000000ULL); // 5 hours in microseconds
+    // Put ESP32 into deep sleep for 1 hours (1 * 60 * 60 * 1,000,000 microseconds)
+    Serial.println("Entering deep sleep for 1 hours...");
+    esp_sleep_enable_timer_wakeup(1 * 60 * 60 * 1000000ULL); // 1 hours in microseconds
     esp_deep_sleep_start();
 }
 
