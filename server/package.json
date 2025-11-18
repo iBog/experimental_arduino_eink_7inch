@@ -1,0 +1,19 @@
+{
+  "name": "html2png-api",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.1.0",
+    "jimp": "^0.22.10",
+    "puppeteer": "^24.30.0",
+    "sharp": "^0.34.5"
+  }
+}

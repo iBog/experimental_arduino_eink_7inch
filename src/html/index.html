@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Инфо-доска дня</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+      background: #fff;
+      color: #000;
+      width: 800px;
+      height: 480px;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      height: 60px;
+      text-align: center;
+      border-bottom: 2px solid #000;
+      padding-top: 5px;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 36px;
+    }
+    header p {
+      margin: 0;
+      font-size: 16px;
+    }
+    main {
+      display: flex;
+      flex: 1;
+    }
+    section {
+      width: 400px;
+      padding: 10px;
+      box-sizing: border-box;
+      border-right: 1px solid #000;
+    }
+    section:last-child {
+      border-right: none;
+    }
+    .block {
+      margin-bottom: 20px;
+    }
+    .block h2 {
+      font-size: 18px;
+      margin-bottom: 5px;
+      border-bottom: 1px solid #000;
+    }
+    .block p {
+      margin: 4px 0;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .quote {
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 id="time">--:--</h1>
+    <p id="date">Загрузка даты...</p>
+  </header>
+  <main>
+    <section>
+      <div class="block">
+        <h2>Курс валют</h2>
+        <p id="usd">USD: загрузка...</p>
+        <p id="eur">EUR: загрузка...</p>
+        <p id="btc">BTC: загрузка...</p>
+      </div>
+      <div class="block">
+        <h2>Погода</h2>
+        <p id="weather">Загрузка погоды...</p>
+      </div>
+      <div class="block">
+        <h2>Цитата дня</h2>
+        <p class="quote" id="quote">Загрузка цитаты...</p>
+        <p id="author"></p>
+      </div>
+    </section>
+    <section>
+      <div class="block">
+        <h2>Новости</h2>
+        <p id="news1">Загрузка...</p>
+        <p id="news2"></p>
+        <p id="news3"></p>
+      </div>
+      <div class="block">
+        <h2>Факт дня</h2>
+        <p id="fact">Загрузка факта...</p>
+      </div>
+      <div class="block">
+        <h2>Календарь</h2>
+        <p id="calendar1">Загрузка...</p>
+        <p id="calendar2"></p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // Время и дата
+    const now = new Date();
+    document.getElementById('time').textContent = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('date').textContent = now.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+    // Курс валют (пример с exchangerate.host)
+    fetch('https://api.exchangerate.host/latest?base=USD&symbols=EUR,BYN')
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('usd').textContent = `USD → BYN: ${data.rates.BYN.toFixed(2)}`;
+        document.getElementById('eur').textContent = `EUR → BYN: ${(data.rates.BYN / data.rates.EUR).toFixed(2)}`;
+      });
+
+    // Курс BTC
+    fetch('https://api.coindesk.com/v1/bpi/currentprice/BTC.json')
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('btc').textContent = `BTC: $${parseFloat(data.bpi.USD.rate.replace(',', '')).toFixed(0)}`;
+      });
+
+    // Погода (пример с wttr.in)
+    fetch('https://wttr.in/Minsk?format=%C+%t')
+      .then(res => res.text())
+      .then(text => {
+        document.getElementById('weather').textContent = `Минск: ${text}`;
+      });
+
+    // Цитата дня
+    fetch('https://api.quotable.io/random')
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('quote').textContent = `«${data.content}»`;
+        document.getElementById('author').textContent = `— ${data.author}`;
+      });
+
+    // Новости (пример с Meduza RSS через proxy)
+    fetch('https://api.rss2json.com/v1/api.json?rss_url=https://meduza.io/rss2/all')
+      .then(res => res.json())
+      .then(data => {
+        const items = data.items.slice(0, 3);
+        document.getElementById('news1').textContent = `• ${items[0].title}`;
+        document.getElementById('news2').textContent = `• ${items[1].title}`;
+        document.getElementById('news3').textContent = `• ${items[2].title}`;
+      });
+
+    // Факт дня
+    fetch('https://uselessfacts.jsph.pl/api/v2/facts/today')
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('fact').textContent = data.text;
+      });
+
+    // Календарь дня (заглушка)
+    document.getElementById('calendar1').textContent = '• День вторичной переработки';
+    document.getElementById('calendar2').textContent = '• День философии (ЮНЕСКО)';
+  </script>
+</body>
+</html>
