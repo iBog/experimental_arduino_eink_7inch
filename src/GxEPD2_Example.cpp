@@ -9,10 +9,11 @@
 
 // Render API configuration
 // const char* renderApiUrl = "http://192.168.2.59:3123/render?format=bmp&width=100&height=100";
-// const char* renderApiUrl = "http://192.168.2.59:3123/render?format=bmp";
+// const char* renderApiUrl = "http://192.168.2.59:3123/render?format=bmp&url=https://www.onliner.by";
 // const char* renderApiUrl = "http://192.168.2.59:3123/render?format=png&width=100&height=100";
 // const char* renderApiUrl = "http://192.168.2.59:3123/render?url=https://www.bbc.com&format=png&width=400&height=400";
-const char* renderApiUrl = "http://192.168.2.59:3123/render?url=https://www.bbc.com&format=bmp&width=400&height=200";
+// const char* renderApiUrl = "http://192.168.2.59:3123/render?url=https://www.bbc.com&format=bmp&width=800&height=400";
+const char* renderApiUrl = "http://192.168.2.59:3123/render?mode=weather&format=bmp";
 
 // WiFi credentials
 const char* ssid = "bogswifi5";
@@ -53,7 +54,7 @@ int16_t png_start_row = 0;
 int16_t png_visible_width = 0;
 
 // Function declarations
-bool renderAndDownloadImage(const String& htmlContent, const char* filename);
+bool renderAndDownloadImage(const String& htmlContent, const char* filename, bool enableCaching = 1);
 bool downloadImage(const String& url, const String& htmlContent, const char* filename);
 bool downloadImageWithRetry(const String& url, const String& htmlContent, const char* filename);
 bool copyFile(const char* source, const char* destination);
@@ -104,9 +105,39 @@ void setup()
 
     // Render HTML to image and download it
     // Note: filename extension should match format parameter in renderApiUrl
-    const char* imageFilename = "/rendered.bmp";  // Change to .png if using format=png
-    String htmlContent = "<html><body><h1>Привет, Ilia!</h1><p>Rendered from ESP32</p><p style='color:red'>RED color text test</p></body></html>";
-    bool imageDownloaded = renderAndDownloadImage(htmlContent, imageFilename);
+    const char* imageFilename = "/rendered.bmp"; // Change to .png if using format=png
+
+    // Read HTML content from file dynamically
+    String htmlContent = "";
+    const char* htmlFilename = "/src/html/index.html";
+
+    Serial.println("Reading HTML content from file...");
+    File htmlFile = SPIFFS.open(htmlFilename, FILE_READ);
+    if (!htmlFile) {
+        Serial.println("Failed to open HTML file, using fallback content");
+        htmlContent = "<html><body><h1>Error: HTML file not found</h1><p>Check SPIFFS filesystem</p></body></html>";
+    } else {
+        Serial.printf("HTML file opened successfully, size: %d bytes\n", htmlFile.size());
+
+        // Read file content into String
+        while (htmlFile.available()) {
+            htmlContent += (char)htmlFile.read();
+        }
+        htmlFile.close();
+
+        Serial.printf("HTML content loaded: %d characters\n", htmlContent.length());
+
+        // Debug: print first 200 characters to verify content
+        if (htmlContent.length() > 200) {
+            Serial.println("HTML preview: " + htmlContent.substring(0, 200) + "...");
+        } else {
+            Serial.println("HTML content: " + htmlContent);
+        }
+    }
+
+    // Test with caching enabled (default) and disabled
+    bool imageDownloaded = renderAndDownloadImage(htmlContent, imageFilename); // Default: caching enabled (1)
+    // bool imageDownloaded = renderAndDownloadImage(htmlContent, imageFilename, 0); // Example: caching disabled (0)
 
     // Display the PNG on e-ink display (can be disabled for debugging)
     bool displayEnabled = true; // Set to false to disable display for debugging
@@ -149,9 +180,9 @@ void setup()
         Serial.println("Display update completed");
     }
     // Put ESP32 into deep sleep for 1 hours (1 * 60 * 60 * 1,000,000 microseconds)
-    // Serial.println("Entering deep sleep for 1 hours...");
-    // esp_sleep_enable_timer_wakeup(1 * 60 * 60 * 1000000ULL); // 1 hours in microseconds
-    // esp_deep_sleep_start();
+    Serial.println("Entering deep sleep for 1 hours...");
+    esp_sleep_enable_timer_wakeup(1 * 60 * 60 * 1000000ULL); // 1 hours in microseconds
+    esp_deep_sleep_start();
 }
 
 void loop()
@@ -172,30 +203,39 @@ void connectWiFi()
 }
 
 // Main function to render HTML to image and download it
-bool renderAndDownloadImage(const String& htmlContent, const char* filename)
+bool renderAndDownloadImage(const String& htmlContent, const char* filename, bool enableCaching)
 {
     Serial.println("Attempting to download image from render API...");
+    Serial.printf("Caching %s\n", enableCaching ? "enabled" : "disabled");
 
     // Try to download with retry logic
     bool success = downloadImageWithRetry(renderApiUrl, htmlContent, filename);
 
     if (success) {
         Serial.println("Image download successful");
-        // Cache the successful download for future fallback
-        copyFile(filename, CACHED_IMAGE_FILENAME);
+        // Cache the successful download for future fallback if caching is enabled
+        if (enableCaching) {
+            Serial.println("Caching successful download...");
+            copyFile(filename, CACHED_IMAGE_FILENAME);
+        } else {
+            Serial.println("Caching disabled - skipping cache copy");
+        }
         return true;
     } else {
         Serial.println("All download attempts failed, checking for cached file...");
 
-        // Try to use cached file as fallback
-        if (fileExists(CACHED_IMAGE_FILENAME)) {
+        // Try to use cached file as fallback only if caching is enabled
+        if (enableCaching && fileExists(CACHED_IMAGE_FILENAME)) {
             Serial.println("Using cached image file as fallback");
             if (copyFile(CACHED_IMAGE_FILENAME, filename)) {
                 return true;
             }
+        } else if (!enableCaching) {
+            Serial.println("Caching disabled - no fallback available");
+        } else {
+            Serial.println("No cached file available, download failed");
         }
 
-        Serial.println("No cached file available, download failed");
         return false;
     }
 }
@@ -211,14 +251,19 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
 
     int httpCode;
     // Use POST for render API with HTML content, GET for direct URLs
-    if (htmlContent.length() > 0) {
-        http.addHeader("Content-Type", "text/html");
-        httpCode = http.POST(htmlContent);
-        Serial.println("Using POST method");
-    } else {
-        httpCode = http.GET();
-        Serial.println("Using GET method");
-    }
+    // Add headers to prevent cookies and ensure clean request
+    http.addHeader("Content-Type", "text/html; charset=utf-8");
+    http.addHeader("Cookie", ""); // Clear any existing cookies
+    http.addHeader("Cache-Control", "no-cache");
+    http.addHeader("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36");
+    
+    // Additional headers to prevent tracking and cookies
+    http.addHeader("Accept", "*/*");
+    http.addHeader("Accept-Encoding", "identity");
+    http.addHeader("Connection", "close");
+    
+    httpCode = http.POST(htmlContent);
+    Serial.println("Using POST method with cookie prevention");
 
     Serial.printf("HTTP response code: %d\n", httpCode);
 
@@ -307,12 +352,12 @@ void displayImage(const char* filename, int16_t x, int16_t y)
         Serial.println("Failed to open image file");
         return;
     }
-    
+
     // Read magic bytes to detect format
     uint8_t magic[4];
     file.read(magic, 4);
     file.close();
-    
+
     // Check for BMP signature (BM = 0x42 0x4D)
     if (magic[0] == 0x42 && magic[1] == 0x4D) {
         Serial.println("Detected BMP format");
@@ -322,10 +367,9 @@ void displayImage(const char* filename, int16_t x, int16_t y)
     else if (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) {
         Serial.println("Detected PNG format");
         displayPNG(filename, x, y);
-    }
-    else {
-        Serial.printf("Unknown image format: 0x%02X 0x%02X 0x%02X 0x%02X\n", 
-                      magic[0], magic[1], magic[2], magic[3]);
+    } else {
+        Serial.printf("Unknown image format: 0x%02X 0x%02X 0x%02X 0x%02X\n",
+            magic[0], magic[1], magic[2], magic[3]);
     }
 }
 
@@ -334,57 +378,57 @@ void displayBMP(const char* filename, int16_t x, int16_t y)
 {
     File file = SPIFFS.open(filename, FILE_READ);
     uint32_t startTime = millis();
-    
+
     if (!file) {
         Serial.println("Failed to open BMP file");
         return;
     }
-    
+
     Serial.println();
     Serial.print("Loading BMP '");
     Serial.print(filename);
     Serial.println('\'');
-    
+
     // Parse BMP header
     if (read16(file) == 0x4D42) { // BMP signature
         read32(file); // fileSize
         read32(file); // creatorBytes
         uint32_t imageOffset = read32(file);
-        read32(file); // headerSize  
+        read32(file); // headerSize
         uint32_t width = read32(file);
         int32_t height = (int32_t)read32(file);
         read16(file); // planes
         uint16_t depth = read16(file);
-        
+
         // Handle both top-down (negative height) and bottom-up (positive height) BMPs
         bool topDown = (height < 0);
         if (topDown) {
             height = -height; // Make positive
         }
-        
+
         if (depth == 24) {
             Serial.printf("BMP: %dx%d, 24-bit, %s\n", width, height, topDown ? "top-down" : "bottom-up");
-            
+
             // Calculate offset to center image if smaller than display
             int16_t offsetX = (width < display.epd2.WIDTH) ? (display.epd2.WIDTH - width) / 2 : 0;
             int16_t offsetY = (height < display.epd2.HEIGHT) ? (display.epd2.HEIGHT - height) / 2 : 0;
-            
+
             // Apply user offset
             offsetX += x;
             offsetY += y;
-            
+
             // Calculate visible area
             int16_t startCol = (offsetX < 0) ? -offsetX : 0;
             int16_t startRow = (offsetY < 0) ? -offsetY : 0;
             int16_t endCol = (offsetX + width > display.epd2.WIDTH) ? display.epd2.WIDTH - offsetX : width;
             int16_t endRow = (offsetY + height > display.epd2.HEIGHT) ? display.epd2.HEIGHT - offsetY : height;
-            
-            Serial.printf("Display offset: (%d,%d), visible: cols[%d:%d] rows[%d:%d]\n", 
-                         offsetX, offsetY, startCol, endCol, startRow, endRow);
-            
+
+            Serial.printf("Display offset: (%d,%d), visible: cols[%d:%d] rows[%d:%d]\n",
+                offsetX, offsetY, startCol, endCol, startRow, endRow);
+
             uint32_t rowSize = (width * 3 + 3) & ~3; // Row padding to 4 bytes
             file.seek(imageOffset);
-            
+
             // Process each row - handle both top-down and bottom-up BMPs
             for (int16_t fileRow = startRow; fileRow < endRow; fileRow++) {
                 // Calculate the correct file row position based on BMP orientation
@@ -396,27 +440,27 @@ void displayBMP(const char* filename, int16_t x, int16_t y)
                     // Bottom-up: fileRow 0 is bottom of image, so we need to read from bottom
                     actualFileRow = height - 1 - fileRow;
                 }
-                
+
                 file.seek(imageOffset + actualFileRow * rowSize + startCol * 3);
-                
+
                 int16_t visibleWidth = endCol - startCol;
-                
+
                 // Clear buffers
                 memset(output_row_mono_buffer, 0xFF, (visibleWidth + 7) / 8);
                 memset(output_row_color_buffer, 0xFF, (visibleWidth + 7) / 8);
-                
+
                 // Read row data
                 file.read(bmp_input_buffer, visibleWidth * 3);
-                
+
                 // Convert BGR to e-paper format
                 for (uint16_t col = 0; col < visibleWidth; col++) {
                     uint8_t b = bmp_input_buffer[col * 3];
                     uint8_t g = bmp_input_buffer[col * 3 + 1];
                     uint8_t r = bmp_input_buffer[col * 3 + 2];
-                    
+
                     bool whitish = (r > 0x80) && (g > 0x80) && (b > 0x80);
                     bool colored = (r > 0xF0) || ((g > 0xF0) && (b > 0xF0));
-                    
+
                     if (!whitish) {
                         if (colored) {
                             output_row_color_buffer[col / 8] &= ~(0x80 >> (col % 8));
@@ -425,13 +469,13 @@ void displayBMP(const char* filename, int16_t x, int16_t y)
                         }
                     }
                 }
-                
+
                 // Calculate display row - now fileRow correctly represents the display row
                 int16_t displayRow = offsetY + fileRow;
-                display.writeImage(output_row_mono_buffer, output_row_color_buffer, 
-                                 offsetX + startCol, displayRow, visibleWidth, 1);
+                display.writeImage(output_row_mono_buffer, output_row_color_buffer,
+                    offsetX + startCol, displayRow, visibleWidth, 1);
             }
-            
+
             Serial.print("BMP loaded in ");
             Serial.print(millis() - startTime);
             Serial.println(" ms");
@@ -441,7 +485,7 @@ void displayBMP(const char* filename, int16_t x, int16_t y)
     } else {
         Serial.println("Invalid BMP signature");
     }
-    
+
     file.close();
 }
 
@@ -634,14 +678,16 @@ void pngClose(void* handle)
 int32_t pngRead(PNGFILE* handle, uint8_t* buffer, int32_t length)
 {
     File* file = (File*)handle->fHandle;
-    if (!file) return 0;
+    if (!file)
+        return 0;
     return file->read(buffer, length);
 }
 
 int32_t pngSeek(PNGFILE* handle, int32_t position)
 {
     File* file = (File*)handle->fHandle;
-    if (!file) return 0;
+    if (!file)
+        return 0;
     return file->seek(position);
 }
 
@@ -652,26 +698,26 @@ int pngDraw(PNGDRAW* pDraw)
         Serial.println("PNG draw error: invalid parameters");
         return 0;
     }
-    
+
     uint8_t* pixels = (uint8_t*)pDraw->pPixels;
     uint16_t w = pDraw->iWidth;
     uint16_t y = pDraw->y;
     int pixelType = pDraw->iPixelType;
-    
+
     // Check if this row is visible on display
     int16_t displayY = png_offset_y + y;
     if (y < png_start_row || displayY >= display.epd2.HEIGHT) {
         return 1; // Skip this row
     }
-    
+
     // Clear output buffers
     memset(output_row_mono_buffer, 0xFF, (png_visible_width + 7) / 8);
     memset(output_row_color_buffer, 0xFF, (png_visible_width + 7) / 8);
-    
+
     // Process only visible columns
     for (uint16_t x = png_start_col; x < png_start_col + png_visible_width && x < w; x++) {
         uint8_t r, g, b, a = 255;
-        
+
         // Handle different pixel formats
         if (pixelType == PNG_PIXEL_TRUECOLOR) {
             // RGB888 format (3 bytes per pixel)
@@ -694,21 +740,21 @@ int pngDraw(PNGDRAW* pDraw)
             uint8_t gray = pixels[x];
             r = g = b = gray;
         }
-        
+
         // If pixel is transparent or semi-transparent, treat as white
         if (a < 128) {
             // Transparent - keep white (buffer already set to 0xFF)
             continue;
         }
-        
+
         // Determine if whitish
         bool whitish = (r > 0x80) && (g > 0x80) && (b > 0x80);
         // Determine if colored (reddish or yellowish)
         bool colored = (r > 0xF0) || ((g > 0xF0) && (b > 0xF0));
-        
+
         // Map to output buffer
         uint16_t outX = x - png_start_col;
-        
+
         if (!whitish) {
             if (colored) {
                 // Set color bit
@@ -719,10 +765,10 @@ int pngDraw(PNGDRAW* pDraw)
             }
         }
     }
-    
+
     // Write the row to display
-    display.writeImage(output_row_mono_buffer, output_row_color_buffer, 
-                     png_offset_x + png_start_col, displayY, png_visible_width, 1);
+    display.writeImage(output_row_mono_buffer, output_row_color_buffer,
+        png_offset_x + png_start_col, displayY, png_visible_width, 1);
     return 1; // success
 }
 
@@ -730,49 +776,49 @@ int pngDraw(PNGDRAW* pDraw)
 void displayPNG(const char* filename, int16_t x, int16_t y)
 {
     uint32_t startTime = millis();
-    
+
     Serial.println();
     Serial.print("Loading PNG image '");
     Serial.print(filename);
     Serial.println('\'');
-    
+
     int rc = png.open(filename, pngOpen, pngClose, pngRead, pngSeek, pngDraw);
     if (rc == PNG_SUCCESS) {
         int16_t width = png.getWidth();
         int16_t height = png.getHeight();
-        
-        Serial.printf("Image size: %dx%d, bpp: %d, pixel type: %d\n", 
-                      width, height, png.getBpp(), png.getPixelType());
-        
+
+        Serial.printf("Image size: %dx%d, bpp: %d, pixel type: %d\n",
+            width, height, png.getBpp(), png.getPixelType());
+
         // Calculate offset to center image if smaller than display
         png_offset_x = (width < display.epd2.WIDTH) ? (display.epd2.WIDTH - width) / 2 : 0;
         png_offset_y = (height < display.epd2.HEIGHT) ? (display.epd2.HEIGHT - height) / 2 : 0;
-        
+
         // Apply user offset
         png_offset_x += x;
         png_offset_y += y;
-        
+
         // Calculate visible area
         png_start_col = (png_offset_x < 0) ? -png_offset_x : 0;
         png_start_row = (png_offset_y < 0) ? -png_offset_y : 0;
         int16_t endCol = (png_offset_x + width > display.epd2.WIDTH) ? display.epd2.WIDTH - png_offset_x : width;
         int16_t endRow = (png_offset_y + height > display.epd2.HEIGHT) ? display.epd2.HEIGHT - png_offset_y : height;
-        
+
         png_visible_width = endCol - png_start_col;
-        
-        Serial.printf("Display offset: (%d,%d), visible: cols[%d:%d] rows[%d:%d]\n", 
-                     png_offset_x, png_offset_y, png_start_col, endCol, png_start_row, endRow);
-        
+
+        Serial.printf("Display offset: (%d,%d), visible: cols[%d:%d] rows[%d:%d]\n",
+            png_offset_x, png_offset_y, png_start_col, endCol, png_start_row, endRow);
+
         // Set options to convert paletted/indexed images to RGB during decode
         // This ensures pngDraw callback receives RGB data
         uint8_t ucOptions = 0;
         if (png.getPixelType() == PNG_PIXEL_INDEXED) {
             Serial.println("Indexed PNG detected, will convert to RGB");
         }
-        
+
         rc = png.decode(NULL, ucOptions);
         png.close();
-        
+
         if (rc == PNG_SUCCESS) {
             Serial.print("PNG loaded in ");
             Serial.print(millis() - startTime);

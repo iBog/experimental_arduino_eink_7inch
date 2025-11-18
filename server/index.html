@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Инфо-доска дня</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+      background: #fff;
+      color: #000;
+      width: 800px;
+      height: 480px;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      height: 80px;
+      text-align: center;
+      padding: 5px 10px 0;
+      box-sizing: border-box;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 32px;
+      line-height: 1.1;
+    }
+    header p {
+      margin: 2px 0;
+      font-size: 14px;
+      line-height: 1.2;
+    }
+    #weather {
+      font-size: 12px !important;
+      margin: 2px 0 !important;
+      font-weight: normal;
+    }
+    main {
+      display: flex;
+      flex: 1;
+    }
+    section {
+      width: 400px;
+      padding: 10px;
+      box-sizing: border-box;
+      border-right: 1px solid #000;
+    }
+    section:last-child {
+      border-right: none;
+    }
+    .block {
+      margin-bottom: 20px;
+    }
+    .block h2 {
+      font-size: 18px;
+      margin-bottom: 5px;
+      border-bottom: 1px solid #000;
+    }
+    .block p {
+      margin: 4px 0;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .quote {
+      font-style: italic;
+    }
+    .error {
+      color: #d32f2f;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 id="time">--:--</h1>
+    <p id="date">Загрузка даты...</p>
+  </header>
+  <div style="text-align: center; padding: 10px 0;">
+    <p id="weather-main" style="font-size: 24px; font-weight: bold; margin: 4px 0;">Загрузка погоды...</p>
+    <div style="border-bottom: 2px solid #000; margin: 5px auto 0; width: 760px;"></div>
+  </div>
+  <main>
+    <section>
+      <div class="block">
+        <h2>Курс валют</h2>
+        <p id="usd">USD: загрузка...</p>
+        <p id="eur">EUR: загрузка...</p>
+        <p id="rub">RUB: загрузка...</p>
+        <p id="btc">BTC: загрузка...</p>
+      </div>
+      <div class="block">
+        <h2>Прогноз погоды</h2>
+        <p id="weather-details" style="font-size: 12px; margin: 2px 0;"></p>
+      </div>
+      <div class="block">
+        <h2>Цитата дня</h2>
+        <p class="quote" id="quote">Загрузка цитаты...</p>
+        <p id="author"></p>
+      </div>
+    </section>
+    <section>
+      <div class="block">
+        <h2>Новости</h2>
+        <p id="news1">Загрузка...</p>
+        <p id="news2"></p>
+        <p id="news3"></p>
+      </div>
+      <div class="block">
+        <h2>Факт дня</h2>
+        <p id="fact">Загрузка факта...</p>
+      </div>
+      <div class="block">
+        <h2>Календарь</h2>
+        <p id="calendar1">Загрузка...</p>
+        <p id="calendar2"></p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // Обновление времени и даты
+    function updateDateTime() {
+      const now = new Date();
+      document.getElementById('time').textContent = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      document.getElementById('date').textContent = now.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    }
+    
+    // Обновлять время каждую секунду
+    updateDateTime();
+    setInterval(updateDateTime, 1000);
+
+    // Функция для безопасного выполнения запросов
+    async function safeFetch(url, fallback) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Network response was not ok');
+        return await response.json();
+      } catch (error) {
+        console.error(`Error fetching ${url}:`, error);
+        return fallback;
+      }
+    }
+
+    // Курс валют - правильные конвертации в BYN
+    async function loadCurrencyRates() {
+      try {
+        // Получаем курсы USD к другим валютам
+        const usdData = await safeFetch('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json', null);
+        if (usdData && usdData.usd) {
+          const rates = usdData.usd;
+          const usdToByn = rates.byn;
+          const eurToByn = rates.byn / rates.eur;
+          const rubToByn = rates.byn / rates.rub;
+          
+          document.getElementById('usd').textContent = `1 USD = ${usdToByn.toFixed(4)} BYN`;
+          document.getElementById('eur').textContent = `1 EUR = ${eurToByn.toFixed(4)} BYN`;
+          document.getElementById('rub').textContent = `100 RUB = ${(rubToByn * 100).toFixed(4)} BYN`;
+        } else {
+          throw new Error('Invalid currency data');
+        }
+      } catch (error) {
+        // Запасные значения на случай ошибки API
+        document.getElementById('usd').textContent = `1 USD = 3.2800 BYN`;
+        document.getElementById('eur').textContent = `1 EUR = 3.4500 BYN`;
+        document.getElementById('rub').textContent = `100 RUB = 3.6000 BYN`;
+        document.getElementById('rub').innerHTML += '<span class="error"> (оффлайн)</span>';
+      }
+    }
+
+    // Курс BTC
+    async function loadBTCPrice() {
+      try {
+        const btcData = await safeFetch('https://api.coindesk.com/v1/bpi/currentprice.json', null);
+        if (btcData && btcData.bpi && btcData.bpi.USD) {
+          const btcPrice = parseFloat(btcData.bpi.USD.rate.replace(',', ''));
+          document.getElementById('btc').textContent = `1 BTC = $${btcPrice.toLocaleString()}`;
+        } else {
+          throw new Error('Invalid BTC data');
+        }
+      } catch (error) {
+        document.getElementById('btc').textContent = `1 BTC = $95,000`;
+        document.getElementById('btc').innerHTML += '<span class="error"> (оффлайн)</span>';
+      }
+    }
+
+    // Погода для Минска
+    async function loadWeather() {
+      try {
+        // Получаем детальную погодную информацию с OpenWeatherMap на русском языке
+        const response = await fetch('http://api.openweathermap.org/data/2.5/weather?q=Minsk&appid=99fc51e4e132d3e0a465294f293ad82a&units=metric&lang=ru');
+        if (!response.ok) throw new Error('Weather API failed');
+        const weatherData = await response.json();
+        
+        const temp = Math.round(weatherData.main.temp);
+        const description = weatherData.weather[0].description;
+        const humidity = weatherData.main.humidity;
+        const pressure = Math.round(weatherData.main.pressure);
+        const windSpeed = Math.round(weatherData.wind.speed * 3.6); // м/с в км/ч
+        
+        // Основная строка с температурой и городом
+        document.getElementById('weather-main').textContent = `Минск ${temp}°C`;
+        
+        // Детальная информация ниже
+        const details = `${description}, ветер ${windSpeed} км/ч, ${humidity}% влаж., ${pressure} мбар`;
+        document.getElementById('weather-details').textContent = details;
+      } catch (error) {
+        try {
+          // Запасной вариант с wttr.in
+          const response = await fetch('https://wttr.in/Minsk?format=%t+%C+%w+%h+%P&lang=ru');
+          if (!response.ok) throw new Error('Weather API failed');
+          const weatherText = await response.text();
+          const parts = weatherText.split(' ');
+          const temp = parts[0];
+          const desc = parts[1];
+          const wind = parts[2] || '2км/ч';
+          
+          document.getElementById('weather-main').textContent = `Минск ${temp}`;
+          document.getElementById('weather-details').textContent = `${desc}, ветер ${wind}, 65% влаж., 1013 мбар`;
+        } catch (fallbackError) {
+          document.getElementById('weather-main').textContent = 'Минск +2°C';
+          document.getElementById('weather-details').textContent = 'Облачно, ветер 5 км/ч, 65% влаж., 1013 мбар';
+          document.getElementById('weather-main').innerHTML += '<span class="error"> (оффлайн)</span>';
+        }
+      }
+    }
+
+    // Цитата дня
+    async function loadQuote() {
+      try {
+        const quoteData = await safeFetch('https://api.quotable.io/random?maxLength=100', null);
+        if (quoteData && quoteData.content && quoteData.author) {
+          document.getElementById('quote').textContent = `«${quoteData.content}»`;
+          document.getElementById('author').textContent = `— ${quoteData.author}`;
+        } else {
+          throw new Error('Invalid quote data');
+        }
+      } catch (error) {
+        // Запасная цитата
+        document.getElementById('quote').textContent = "Лучшее время посадить дерево было 20 лет назад. Второе лучшее время - сейчас.";
+        document.getElementById('author').textContent = "- Китайская пословица";
+        document.getElementById('quote').innerHTML += '<span class="error"> (оффлайн)</span>';
+      }
+    }
+
+    // Новости (используем несколько источников для надежности)
+    async function loadNews() {
+      try {
+        const newsData = await safeFetch('https://api.rss2json.com/v1/api.json?rss_url=https://tass.ru/rss/v2.xml', null);
+        if (newsData && newsData.items && newsData.items.length >= 3) {
+          const items = newsData.items.slice(0, 3);
+          document.getElementById('news1').textContent = `• ${items[0].title.substring(0, 80)}...`;
+          document.getElementById('news2').textContent = `• ${items[1].title.substring(0, 80)}...`;
+          document.getElementById('news3').textContent = `• ${items[2].title.substring(0, 80)}...`;
+        } else {
+          throw new Error('Invalid news data');
+        }
+      } catch (error) {
+        // Запасные новости
+        document.getElementById('news1').textContent = '• Экономика Беларуси показывает стабильный рост в текущем квартале';
+        document.getElementById('news2').textContent = '• В Минске открыли новую станцию метро';
+        document.getElementById('news3').textContent = '• Белорусские IT-компании представили новые разработки';
+        document.getElementById('news1').innerHTML += '<span class="error"> (оффлайн)</span>';
+      }
+    }
+
+    // Факт дня
+    async function loadFact() {
+      try {
+        const factData = await safeFetch('https://uselessfacts.jsph.pl/api/v2/facts/today', null);
+        if (factData && factData.text) {
+          document.getElementById('fact').textContent = factData.text.substring(0, 120) + '...';
+        } else {
+          throw new Error('Invalid fact data');
+        }
+      } catch (error) {
+        // Запасной факт
+        document.getElementById('fact').textContent = 'Беларусь является одним из крупнейших производителей картофеля в Европе, занимая около 8% мирового производства.';
+        document.getElementById('fact').innerHTML += '<span class="error"> (оффлайн)</span>';
+      }
+    }
+
+    // Календарь знаменательных дат
+    function loadCalendar() {
+      const today = new Date();
+      const month = today.getMonth() + 1;
+      const day = today.getDate();
+      
+      // Примеры знаменательных дат
+      const events = {
+        '1-1': ['Новый год', 'Международный день мира'],
+        '2-14': ['День Святого Валентина'],
+        '3-8': ['Международный женский день'],
+        '4-1': ['День смеха'],
+        '5-1': ['День труда'],
+        '5-9': ['День Победы'],
+        '6-1': ['День защиты детей'],
+        '7-3': ['День независимости Беларуси'],
+        '9-1': ['День знаний'],
+        '10-1': ['Международный день пожилых'],
+        '11-7': ['Октябрьская революция'],
+        '12-25': ['Рождество Христово']
+      };
+      
+      const key = `${month}-${day}`;
+      const dayEvents = events[key] || ['Обычный день'];
+      
+      document.getElementById('calendar1').textContent = `• ${dayEvents[0]}`;
+      if (dayEvents[1]) {
+        document.getElementById('calendar2').textContent = `• ${dayEvents[1]}`;
+      } else {
+        document.getElementById('calendar2').textContent = '• День хорошего настроения';
+      }
+    }
+
+    // Загрузка всех данных
+    async function loadAllData() {
+      await Promise.all([
+        loadCurrencyRates(),
+        loadBTCPrice(),
+        loadWeather(),
+        loadQuote(),
+        loadNews(),
+        loadFact()
+      ]);
+      loadCalendar();
+    }
+
+    // Загружаем данные при загрузке страницы (только один раз)
+    loadAllData();
+  </script>
+</body>
+</html>

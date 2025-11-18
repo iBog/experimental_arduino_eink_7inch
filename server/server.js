@@ -11,6 +11,7 @@ app.use(express.text({ type: 'text/html', limit: '1mb' }));
 app.post('/render', async (req, res) => {
   const html = req.body;
   const url = req.query.url;
+  const mode = req.query.mode;
   const format = (req.query.format || 'png').toLowerCase(); // png or bmp
   const width = parseInt(req.query.width) || 800; // Default width
   const height = parseInt(req.query.height) || 480; // Default height
@@ -18,7 +19,7 @@ app.post('/render', async (req, res) => {
   const pngPath = path.join(__dirname, `${baseName}.png`);
   const outPath = path.join(__dirname, `${baseName}.${format}`);
 
-  console.log(`Rendering with dimensions: ${width}x${height}, format: ${format}`);
+  console.log(`Rendering with dimensions: ${width}x${height}, format: ${format}, mode: ${mode || 'default'}`);
 
   try {
     const browser = await puppeteer.launch({
@@ -38,7 +39,20 @@ app.post('/render', async (req, res) => {
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36'
     );
 
-    if (url) {
+    let contentHtml = null;
+
+    if (mode === 'weather') {
+      console.log(`Using weather mode - loading index.html from server directory`);
+      const indexPath = path.join(__dirname, 'index.html');
+      try {
+        contentHtml = fs.readFileSync(indexPath, 'utf8');
+        console.log(`Successfully loaded index.html`);
+      } catch (readError) {
+        await browser.close();
+        return res.status(500).send(`Ошибка чтения index.html: ${readError.message}`);
+      }
+      await page.setContent(contentHtml, { waitUntil: 'networkidle0', timeout: 60000 });
+    } else if (url) {
       console.log(`Загрузка URL: ${url}`);
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
     } else if (html) {
@@ -46,10 +60,10 @@ app.post('/render', async (req, res) => {
       await page.setContent(html, { waitUntil: 'networkidle0', timeout: 60000 });
     } else {
       await browser.close();
-      return res.status(400).send('Ошибка: передайте HTML в теле запроса или параметр ?url=');
+      return res.status(400).send('Ошибка: передайте HTML в теле запроса, параметр ?url= или заголовок mode=weather');
     }
 
-    await new Promise(resolve => setTimeout(resolve, 2000)); // задержка перед скриншотом
+    await new Promise(resolve => setTimeout(resolve, 4000)); // задержка перед скриншотом
     await page.screenshot({ path: pngPath });
     await browser.close();
 
