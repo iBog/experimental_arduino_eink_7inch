@@ -12,7 +12,7 @@
 // const char* renderApiUrl = "http://192.168.2.59:3123/render?format=bmp";
 // const char* renderApiUrl = "http://192.168.2.59:3123/render?format=png&width=100&height=100";
 // const char* renderApiUrl = "http://192.168.2.59:3123/render?url=https://www.bbc.com&format=png&width=400&height=400";
-const char* renderApiUrl = "http://192.168.2.59:3123/render?url=https://www.bbc.com&format=bmp&width=800&height=480";
+const char* renderApiUrl = "http://192.168.2.59:3123/render?url=https://www.bbc.com&format=bmp&width=400&height=200";
 
 // WiFi credentials
 const char* ssid = "bogswifi5";
@@ -385,9 +385,19 @@ void displayBMP(const char* filename, int16_t x, int16_t y)
             uint32_t rowSize = (width * 3 + 3) & ~3; // Row padding to 4 bytes
             file.seek(imageOffset);
             
-            // Process each row - Jimp writes bottom-up BMPs
+            // Process each row - handle both top-down and bottom-up BMPs
             for (int16_t fileRow = startRow; fileRow < endRow; fileRow++) {
-                file.seek(imageOffset + fileRow * rowSize + startCol * 3);
+                // Calculate the correct file row position based on BMP orientation
+                int16_t actualFileRow;
+                if (topDown) {
+                    // Top-down: fileRow 0 is top of image
+                    actualFileRow = fileRow;
+                } else {
+                    // Bottom-up: fileRow 0 is bottom of image, so we need to read from bottom
+                    actualFileRow = height - 1 - fileRow;
+                }
+                
+                file.seek(imageOffset + actualFileRow * rowSize + startCol * 3);
                 
                 int16_t visibleWidth = endCol - startCol;
                 
@@ -416,8 +426,8 @@ void displayBMP(const char* filename, int16_t x, int16_t y)
                     }
                 }
                 
-                // Bottom-up BMP: fileRow 0 is bottom of image
-                int16_t displayRow = offsetY + height - 1 - fileRow;
+                // Calculate display row - now fileRow correctly represents the display row
+                int16_t displayRow = offsetY + fileRow;
                 display.writeImage(output_row_mono_buffer, output_row_color_buffer, 
                                  offsetX + startCol, displayRow, visibleWidth, 1);
             }
@@ -434,224 +444,6 @@ void displayBMP(const char* filename, int16_t x, int16_t y)
     
     file.close();
 }
-
-// Old BMP function (commented out - kept for reference)
-// Supports multiple bit depths but requires additional buffers
-/*
-void displayBMP(const char* filename, int16_t x, int16_t y)
-{
-    File file = SPIFFS.open(filename, FILE_READ);
-    bool valid = false; // valid format to be handled
-    uint32_t startTime = millis();
-
-    if ((x >= display.epd2.WIDTH) || (y >= display.epd2.HEIGHT)) {
-        Serial.println("Display coordinates out of bounds");
-        return;
-    }
-
-    if (!file) {
-        Serial.println("Failed to open BMP file");
-        return;
-    }
-
-    Serial.println();
-    Serial.print("Loading image '");
-    Serial.print(filename);
-    Serial.println('\'');
-
-    // Parse BMP header
-    if (read16(file) == 0x4D42) { // BMP signature
-        uint32_t fileSize = read32(file);
-        uint32_t creatorBytes = read32(file);
-        (void)creatorBytes; // unused
-        uint32_t imageOffset = read32(file); // Start of image data
-        uint32_t headerSize = read32(file);
-        uint32_t width = read32(file);
-        int32_t height = (int32_t)read32(file);
-        uint16_t planes = read16(file);
-        uint16_t depth = read16(file); // bits per pixel
-        uint32_t format = read32(file);
-
-        // Handle negative height (top-down bitmap)
-        bool flip = true; // default to bottom-up
-        uint32_t absHeight = abs(height);
-        if (height < 0) {
-            Serial.println("BMP height is negative, flipping image");
-            flip = false; // top-down bitmap, don't flip
-            height = absHeight;
-        }
-
-        Serial.print("File size: ");
-        Serial.println(fileSize);
-        Serial.print("Image Offset: ");
-        Serial.println(imageOffset);
-        Serial.print("Header size: ");
-        Serial.println(headerSize);
-        Serial.print("Image format: ");
-        Serial.println(format);
-        Serial.print("Image planes: ");
-        Serial.println(planes);
-        Serial.print("Bit Depth: ");
-        Serial.println(depth);
-        Serial.print("Image size: ");
-        Serial.print(width);
-        Serial.print('x');
-        Serial.print(absHeight);
-        Serial.print(" (");
-        Serial.print(flip ? "bottom-up" : "top-down");
-        Serial.println(")");
-        if ((planes == 1) && ((format == 0) || (format == 3))) { // uncompressed is handled, 565 also
-
-            // BMP rows are padded (if needed) to 4-byte boundary
-            uint32_t rowSize = (width * depth / 8 + 3) & ~3;
-            if (depth < 8)
-                rowSize = ((width * depth + 8 - depth) / 8 + 3) & ~3;
-
-            uint16_t w = width;
-            uint16_t h = height;
-            if ((x + w - 1) >= display.epd2.WIDTH)
-                w = display.epd2.WIDTH - x;
-            if ((y + h - 1) >= display.epd2.HEIGHT)
-                h = display.epd2.HEIGHT - y;
-
-            if (w <= max_row_width) { // handle with direct drawing
-                valid = true;
-                uint8_t bitmask = 0xFF;
-                uint8_t bitshift = 8 - depth;
-                uint16_t red, green, blue;
-                bool whitish = false;
-                bool colored = false;
-                bool with_color = true; // Use color for 3-color display
-
-                if (depth == 1)
-                    with_color = false;
-
-                if (depth <= 8) {
-                    if (depth < 8)
-                        bitmask >>= depth;
-                    // file.seek(54); //palette is always @ 54
-                    file.seek(imageOffset - (4 << depth)); // 54 for regular, diff for colorsimportant
-                    for (uint16_t pn = 0; pn < (1 << depth); pn++) {
-                        blue = file.read();
-                        green = file.read();
-                        red = file.read();
-                        file.read();
-                        whitish = with_color ? ((red > 0x80) && (green > 0x80) && (blue > 0x80)) : ((red + green + blue) > 3 * 0x80); // whitish
-                        colored = (red > 0xF0) || ((green > 0xF0) && (blue > 0xF0)); // reddish or yellowish?
-                        if (0 == pn % 8)
-                            mono_palette_buffer[pn / 8] = 0;
-                        mono_palette_buffer[pn / 8] |= whitish << pn % 8;
-                        if (0 == pn % 8)
-                            color_palette_buffer[pn / 8] = 0;
-                        color_palette_buffer[pn / 8] |= colored << pn % 8;
-                    }
-                }
-
-                // Don't call clearScreen here - screen already cleared before displayBMP
-                uint32_t rowPosition = flip ? imageOffset + (height - h) * rowSize : imageOffset;
-
-                for (uint16_t row = 0; row < h; row++, rowPosition += rowSize) { // for each line
-                    uint32_t in_remain = rowSize;
-                    uint32_t in_idx = 0;
-                    uint32_t in_bytes = 0;
-                    uint8_t in_byte = 0; // for depth <= 8
-                    uint8_t in_bits = 0; // for depth <= 8
-                    uint8_t out_byte = 0xFF; // white (for w%8!=0 border)
-                    uint8_t out_color_byte = 0xFF; // white (for w%8!=0 border)
-                    uint32_t out_idx = 0;
-
-                    file.seek(rowPosition);
-
-                    for (uint16_t col = 0; col < w; col++) { // for each pixel
-                        // Time to read more pixel data?
-                        if (in_idx >= in_bytes) { // ok, exact match for 24bit also (size IS multiple of 3)
-                            in_bytes = file.read(input_buffer, in_remain > sizeof(input_buffer) ? sizeof(input_buffer) : in_remain);
-                            in_remain -= in_bytes;
-                            in_idx = 0;
-                        }
-
-                        switch (depth) {
-                        case 32:
-                            blue = input_buffer[in_idx++];
-                            green = input_buffer[in_idx++];
-                            red = input_buffer[in_idx++];
-                            in_idx++; // skip alpha
-                            whitish = with_color ? ((red > 0x80) && (green > 0x80) && (blue > 0x80)) : ((red + green + blue) > 3 * 0x80); // whitish
-                            colored = (red > 0xF0) || ((green > 0xF0) && (blue > 0xF0)); // reddish or yellowish?
-                            break;
-                        case 24:
-                            blue = input_buffer[in_idx++];
-                            green = input_buffer[in_idx++];
-                            red = input_buffer[in_idx++];
-                            whitish = with_color ? ((red > 0x80) && (green > 0x80) && (blue > 0x80)) : ((red + green + blue) > 3 * 0x80); // whitish
-                            colored = (red > 0xF0) || ((green > 0xF0) && (blue > 0xF0)); // reddish or yellowish?
-                            break;
-                        case 16: {
-                            uint8_t lsb = input_buffer[in_idx++];
-                            uint8_t msb = input_buffer[in_idx++];
-                            if (format == 0) { // 555
-                                blue = (lsb & 0x1F) << 3;
-                                green = ((msb & 0x03) << 6) | ((lsb & 0xE0) >> 2);
-                                red = (msb & 0x7C) << 1;
-                            } else { // 565
-                                blue = (lsb & 0x1F) << 3;
-                                green = ((msb & 0x07) << 5) | ((lsb & 0xE0) >> 3);
-                                red = (msb & 0xF8);
-                            }
-                            whitish = with_color ? ((red > 0x80) && (green > 0x80) && (blue > 0x80)) : ((red + green + blue) > 3 * 0x80); // whitish
-                            colored = (red > 0xF0) || ((green > 0xF0) && (blue > 0xF0)); // reddish or yellowish?
-                        } break;
-                        case 1:
-                        case 2:
-                        case 4:
-                        case 8: {
-                            if (0 == in_bits) {
-                                in_byte = input_buffer[in_idx++];
-                                in_bits = 8;
-                            }
-                            uint16_t pn = (in_byte >> bitshift) & bitmask;
-                            whitish = mono_palette_buffer[pn / 8] & (0x1 << pn % 8);
-                            colored = color_palette_buffer[pn / 8] & (0x1 << pn % 8);
-                            in_byte <<= depth;
-                            in_bits -= depth;
-                        } break;
-                        }
-
-                        if (whitish) {
-                            // keep white
-                        } else if (colored && with_color) {
-                            out_color_byte &= ~(0x80 >> col % 8); // colored
-                        } else {
-                            out_byte &= ~(0x80 >> col % 8); // black
-                        }
-
-                        if ((7 == col % 8) || (col == w - 1)) { // write that last byte! (for w%8!=0 border)
-                            output_row_color_buffer[out_idx] = out_color_byte;
-                            output_row_mono_buffer[out_idx++] = out_byte;
-                            out_byte = 0xFF; // white (for w%8!=0 border)
-                            out_color_byte = 0xFF; // white (for w%8!=0 border)
-                        }
-                    } // end pixel
-
-                    uint16_t yrow = y + (flip ? h - row - 1 : row);
-                    display.writeImage(output_row_mono_buffer, output_row_color_buffer, x, yrow, w, 1);
-                } // end line
-
-                Serial.print("loaded in ");
-                Serial.print(millis() - startTime);
-                Serial.println(" ms");
-            }
-        } else {
-            Serial.println("BMP format not handled.");
-        }
-    }
-
-    file.close();
-    if (!valid) {
-        Serial.println("bitmap format not handled.");
-    }
-}
-*/
 
 // Function to print BMP file information for debugging
 void printBMPInfo(const char* filename)
