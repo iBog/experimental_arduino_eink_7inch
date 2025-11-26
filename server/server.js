@@ -43,7 +43,7 @@ app.post('/render', async (req, res) => {
 
     if (mode === 'weather') {
       console.log(`Using weather mode - loading index.html from server directory`);
-      const indexPath = path.join(__dirname, 'index.html');
+      const indexPath = path.join(__dirname, 'html', 'index.html');
       try {
         contentHtml = fs.readFileSync(indexPath, 'utf8');
         console.log(`Successfully loaded index.html`);
