@@ -63,7 +63,20 @@ app.post('/render', async (req, res) => {
       return res.status(400).send('Ошибка: передайте HTML в теле запроса, параметр ?url= или заголовок mode=weather');
     }
 
-    await new Promise(resolve => setTimeout(resolve, 4000)); // задержка перед скриншотом
+    if (mode === 'weather') {
+      try {
+        console.log('Waiting for data-loaded class...');
+        await page.waitForSelector('body.data-loaded', { timeout: 20000 });
+        console.log('Data loaded signal received.');
+      } catch (e) {
+        console.warn('Timeout waiting for data-loaded class, proceeding with screenshot anyway.');
+      }
+      // Small buffer for final rendering
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 5000)); // задержка перед скриншотом
+    }
+    
     await page.screenshot({ path: pngPath });
     await browser.close();
 

@@ -36,6 +36,11 @@
       margin: 2px 0 !important;
       font-weight: normal;
     }
+    .header-weather {
+      font-size: 20px;
+      font-weight: bold;
+      margin: 4px 0;
+    }
     main {
       display: flex;
       flex: 1;
@@ -75,11 +80,9 @@
   <header>
     <h1 id="time">--:--</h1>
     <p id="date">Загрузка даты...</p>
+    <p id="weather-main" class="header-weather">Загрузка погоды...</p>
   </header>
-  <div style="text-align: center; padding: 10px 0;">
-    <p id="weather-main" style="font-size: 24px; font-weight: bold; margin: 4px 0;">Загрузка погоды...</p>
-    <div style="border-bottom: 2px solid #000; margin: 5px auto 0; width: 760px;"></div>
-  </div>
+  <div style="border-bottom: 2px solid #000; margin: 5px auto 0; width: 760px;"></div>
   <main>
     <section>
       <div class="block">
@@ -107,8 +110,8 @@
         <p id="news3"></p>
       </div>
       <div class="block">
-        <h2>Факт дня</h2>
-        <p id="fact">Загрузка факта...</p>
+        <h2>Новости физики</h2>
+        <p id="physics-news">Загрузка...</p>
       </div>
       <div class="block">
         <h2>Календарь</h2>
@@ -130,40 +133,59 @@
     updateDateTime();
     setInterval(updateDateTime, 1000);
 
-    // Функция для безопасного выполнения запросов
-    async function safeFetch(url, fallback) {
+    // Функция для безопасного выполнения запросов с таймаутом (5 сек)
+    async function safeFetch(url, fallback, timeout = 5000) {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeout);
       try {
-        const response = await fetch(url);
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(id);
         if (!response.ok) throw new Error('Network response was not ok');
         return await response.json();
       } catch (error) {
+        clearTimeout(id);
         console.error(`Error fetching ${url}:`, error);
         return fallback;
       }
     }
 
-    // Курс валют - правильные конвертации в BYN
+    // Курс валют - NBRB RSS
     async function loadCurrencyRates() {
       try {
-        // Получаем курсы USD к другим валютам
-        const usdData = await safeFetch('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json', null);
-        if (usdData && usdData.usd) {
-          const rates = usdData.usd;
-          const usdToByn = rates.byn;
-          const eurToByn = rates.byn / rates.eur;
-          const rubToByn = rates.byn / rates.rub;
+        const rssUrl = 'https://www.nbrb.by/rss/?p=ratesdaily&l=ru';
+        const apiUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`;
+        
+        const rssData = await safeFetch(apiUrl, null);
+        
+        if (rssData && rssData.items && rssData.items.length > 0) {
+          const item = rssData.items[0];
+          const description = item.description;
           
-          document.getElementById('usd').textContent = `1 USD = ${usdToByn.toFixed(4)} BYN`;
-          document.getElementById('eur').textContent = `1 EUR = ${eurToByn.toFixed(4)} BYN`;
-          document.getElementById('rub').textContent = `100 RUB = ${(rubToByn * 100).toFixed(4)} BYN`;
+          // Функция парсинга: ищет название валюты и следующее за ним число
+          const getRate = (pattern) => {
+             // pattern example: "1 Доллар США"
+             // Regex looks for pattern, optional spaces, then captures digits/commas
+             const regex = new RegExp(`${pattern}\\s+([\\d,]+)`, 'i');
+             const match = description.match(regex);
+             return match ? match[1] : '---';
+          };
+
+          const usd = getRate('1 Доллар США');
+          const eur = getRate('1 Евро');
+          const rub = getRate('100 Российских рублей');
+          
+          document.getElementById('usd').textContent = `1 USD = ${usd} BYN`;
+          document.getElementById('eur').textContent = `1 EUR = ${eur} BYN`;
+          document.getElementById('rub').textContent = `100 RUB = ${rub} BYN`;
         } else {
-          throw new Error('Invalid currency data');
+          throw new Error('Invalid NBRB data');
         }
       } catch (error) {
-        // Запасные значения на случай ошибки API
-        document.getElementById('usd').textContent = `1 USD = 3.2800 BYN`;
-        document.getElementById('eur').textContent = `1 EUR = 3.4500 BYN`;
-        document.getElementById('rub').textContent = `100 RUB = 3.6000 BYN`;
+        console.error('Currency load error:', error);
+        // Fallback to example data provided
+        document.getElementById('usd').textContent = `1 USD = 2.9220 BYN`;
+        document.getElementById('eur').textContent = `1 EUR = 3.3819 BYN`;
+        document.getElementById('rub').textContent = `100 RUB = 3.7056 BYN`;
         document.getElementById('rub').innerHTML += '<span class="error"> (оффлайн)</span>';
       }
     }
@@ -220,7 +242,7 @@
         } catch (fallbackError) {
           document.getElementById('weather-main').textContent = 'Минск +2°C';
           document.getElementById('weather-details').textContent = 'Облачно, ветер 5 км/ч, 65% влаж., 1013 мбар';
-          document.getElementById('weather-main').innerHTML += '<span class="error"> (оффлайн)</span>';
+          document.getElementById('weather-main').textContent = 'Минск +2°C';
         }
       }
     }
@@ -228,10 +250,11 @@
     // Цитата дня
     async function loadQuote() {
       try {
-        const quoteData = await safeFetch('https://api.quotable.io/random?maxLength=100', null);
-        if (quoteData && quoteData.content && quoteData.author) {
-          document.getElementById('quote').textContent = `«${quoteData.content}»`;
-          document.getElementById('author').textContent = `— ${quoteData.author}`;
+        const rssData = await safeFetch('https://api.rss2json.com/v1/api.json?rss_url=http://www.aphorisme.ru/xml/last_aphors.xml', null);
+        if (rssData && rssData.items && rssData.items.length > 0) {
+          const item = rssData.items[0];
+          document.getElementById('quote').textContent = `«${item.description}»`;
+          document.getElementById('author').textContent = `— ${item.title}`;
         } else {
           throw new Error('Invalid quote data');
         }
@@ -264,19 +287,22 @@
       }
     }
 
-    // Факт дня
-    async function loadFact() {
+    // Новости физики
+    async function loadPhysics() {
       try {
-        const factData = await safeFetch('https://uselessfacts.jsph.pl/api/v2/facts/today', null);
-        if (factData && factData.text) {
-          document.getElementById('fact').textContent = factData.text.substring(0, 120) + '...';
+        const rssData = await safeFetch('https://api.rss2json.com/v1/api.json?rss_url=https://elementy.ru/rss/news/physics', null);
+        if (rssData && rssData.items && rssData.items.length > 0) {
+          const item = rssData.items[0];
+          // Простая очистка HTML тегов для описания
+          const cleanDesc = item.description.replace(/<[^>]*>?/gm, '').substring(0, 120).trim();
+          
+          document.getElementById('physics-news').innerHTML = `<b>${item.title}</b><br><span style="font-size:13px">${cleanDesc}...</span>`;
         } else {
-          throw new Error('Invalid fact data');
+          throw new Error('Invalid physics data');
         }
       } catch (error) {
-        // Запасной факт
-        document.getElementById('fact').textContent = 'Беларусь является одним из крупнейших производителей картофеля в Европе, занимая около 8% мирового производства.';
-        document.getElementById('fact').innerHTML += '<span class="error"> (оффлайн)</span>';
+        document.getElementById('physics-news').textContent = 'Физика: данные временно недоступны.';
+        document.getElementById('physics-news').innerHTML += '<span class="error"> (оффлайн)</span>';
       }
     }
 
@@ -321,9 +347,10 @@
         loadWeather(),
         loadQuote(),
         loadNews(),
-        loadFact()
+        loadPhysics()
       ]);
       loadCalendar();
+      document.body.classList.add('data-loaded');
     }
 
     // Загружаем данные при загрузке страницы (только один раз)

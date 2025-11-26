@@ -8,12 +8,12 @@
 #include <WiFi.h>
 
 // Render API configuration
-// const char* renderApiUrl = "http://192.168.2.59:3123/render?format=bmp&width=100&height=100";
-// const char* renderApiUrl = "http://192.168.2.59:3123/render?format=bmp&url=https://www.onliner.by";
-// const char* renderApiUrl = "http://192.168.2.59:3123/render?format=png&width=100&height=100";
-// const char* renderApiUrl = "http://192.168.2.59:3123/render?url=https://www.bbc.com&format=png&width=400&height=400";
-// const char* renderApiUrl = "http://192.168.2.59:3123/render?url=https://www.bbc.com&format=bmp&width=800&height=400";
-const char* renderApiUrl = "http://192.168.2.59:3123/render?mode=weather&format=bmp";
+// const char* renderApiUrl = "http://192.168.2.139:3123/render?format=bmp&width=100&height=100";
+// const char* renderApiUrl = "http://192.168.2.139:3123/render?format=bmp&url=https://www.onliner.by";
+// const char* renderApiUrl = "http://192.168.2.139:3123/render?format=png&width=100&height=100";
+// const char* renderApiUrl = "http://192.168.2.139:3123/render?url=https://mediametrics.ru/rating/ru&format=png&width=800&height=480";
+// const char* renderApiUrl = "http://192.168.2.139:3123/render?url=https://www.bbc.com&format=bmp&contrast=1";
+const char* renderApiUrl = "http://192.168.2.139:3123/render?mode=weather&format=bmp&width=800&height=400";
 
 // WiFi credentials
 const char* ssid = "bogswifi5";
@@ -687,8 +687,10 @@ int32_t pngSeek(PNGFILE* handle, int32_t position)
 {
     File* file = (File*)handle->fHandle;
     if (!file)
-        return 0;
-    return file->seek(position);
+        return -1;
+    if (file->seek(position))
+        return position;
+    return -1;
 }
 
 // PNG draw callback - converts RGB to B/W and color for e-paper
