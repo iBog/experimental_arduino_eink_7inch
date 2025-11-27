@@ -3,7 +3,6 @@
 #include <Fonts/TimesNRCyr12.h>
 #include <GxEPD2_3C.h>
 #include <HTTPClient.h>
-#include <PNGdec.h>
 #include <SPIFFS.h>
 #include <WiFi.h>
 
@@ -13,7 +12,8 @@
 // const char* renderApiUrl = "http://192.168.2.139:3123/render?format=png&width=100&height=100";
 // const char* renderApiUrl = "http://192.168.2.139:3123/render?url=https://mediametrics.ru/rating/ru&format=png&width=800&height=480";
 // const char* renderApiUrl = "http://192.168.2.139:3123/render?url=https://www.bbc.com&format=bmp&contrast=1";
-const char* renderApiUrl = "http://192.168.2.139:3123/render?mode=weather&format=bmp&width=800&height=400";
+// const char* renderApiUrl = "http://192.168.2.139:3123/render?mode=weather&format=bmp&width=800&height=478";
+const char* renderApiUrl = "http://192.168.2.139:3123/render";
 
 // WiFi credentials
 const char* ssid = "bogswifi5";
@@ -22,8 +22,8 @@ const char* password = "bog12345";
 // Error handling and retry configuration
 const int MAX_RETRY_ATTEMPTS = 3;
 const int RETRY_DELAY_MS = 2000; // 2 seconds between retries
-const int HTTP_TIMEOUT_MS = 15000; // 15 second timeout
-const char* CACHED_IMAGE_FILENAME = "/cached.img"; // Fallback cached file (format auto-detected)
+const int HTTP_TIMEOUT_MS = 60000; // 60 second timeout
+const char* CACHED_IMAGE_FILENAME = "/cached.bmp"; // Fallback cached file
 
 // BMP input buffer for 24-bit images
 uint8_t bmp_input_buffer[2400]; // One row of 800 pixels * 3 bytes
@@ -38,20 +38,10 @@ uint8_t bmp_input_buffer[2400]; // One row of 800 pixels * 3 bytes
 
 GxEPD2_3C<GxEPD2_750c_Z08, GxEPD2_750c_Z08::HEIGHT / 4> display(GxEPD2_750c_Z08(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 
-// PNG decoder
-PNG png;
-
 // Buffer declarations for image display
 static const uint16_t max_row_width = 1448; // for up to 6\" display 1448x1072
 uint8_t output_row_mono_buffer[max_row_width / 8]; // buffer for at least one row of b/w bits
 uint8_t output_row_color_buffer[max_row_width / 8]; // buffer for at least one row of color bits
-
-// PNG display offset variables (for centering/clipping)
-int16_t png_offset_x = 0;
-int16_t png_offset_y = 0;
-int16_t png_start_col = 0;
-int16_t png_start_row = 0;
-int16_t png_visible_width = 0;
 
 // Function declarations
 bool renderAndDownloadImage(const String& htmlContent, const char* filename, bool enableCaching = 1);
@@ -61,19 +51,12 @@ bool copyFile(const char* source, const char* destination);
 bool fileExists(const char* filename);
 void displayImage(const char* filename, int16_t x, int16_t y);
 void displayBMP(const char* filename, int16_t x, int16_t y);
-void displayPNG(const char* filename, int16_t x, int16_t y);
 void displayErrorScreen(const char* title, const char* message);
 void connectWiFi();
 void printBMPInfo(const char* filename);
+void listDir(const char* dirname, uint8_t levels);
 uint16_t read16(File& f);
 uint32_t read32(File& f);
-
-// PNG decoder callbacks
-void* pngOpen(const char* filename, int32_t* size);
-void pngClose(void* handle);
-int32_t pngRead(PNGFILE* handle, uint8_t* buffer, int32_t length);
-int32_t pngSeek(PNGFILE* handle, int32_t position);
-int pngDraw(PNGDRAW* pDraw);
 
 void setup()
 {
@@ -99,47 +82,35 @@ void setup()
         Serial.printf("SPIFFS Total: %d bytes\n", totalBytes);
         Serial.printf("SPIFFS Used: %d bytes\n", usedBytes);
         Serial.printf("SPIFFS Free: %d bytes\n", totalBytes - usedBytes);
+        
+        // List all files to see what's taking up space
+        listDir("/", 0);
+
+        // Cleanup legacy files to ensure sufficient space
+        const char* filesToDelete[] = {"/converted.bmp", "/cached.img", "/cached.png", "/rendered.png"};
+        for (const char* f : filesToDelete) {
+            if (SPIFFS.exists(f)) {
+                Serial.printf("Deleting legacy file to free space: %s\n", f);
+                SPIFFS.remove(f);
+            }
+        }
+        
+        Serial.printf("SPIFFS Free after cleanup: %d bytes\n", SPIFFS.totalBytes() - SPIFFS.usedBytes());
     }
 
     connectWiFi();
 
     // Render HTML to image and download it
-    // Note: filename extension should match format parameter in renderApiUrl
-    const char* imageFilename = "/rendered.bmp"; // Change to .png if using format=png
+    const char* imageFilename = "/rendered.bmp";
 
     // Read HTML content from file dynamically
     String htmlContent = "";
-    const char* htmlFilename = "/src/html/index.html";
-
-    Serial.println("Reading HTML content from file...");
-    File htmlFile = SPIFFS.open(htmlFilename, FILE_READ);
-    if (!htmlFile) {
-        Serial.println("Failed to open HTML file, using fallback content");
-        htmlContent = "<html><body><h1>Error: HTML file not found</h1><p>Check SPIFFS filesystem</p></body></html>";
-    } else {
-        Serial.printf("HTML file opened successfully, size: %d bytes\n", htmlFile.size());
-
-        // Read file content into String
-        while (htmlFile.available()) {
-            htmlContent += (char)htmlFile.read();
-        }
-        htmlFile.close();
-
-        Serial.printf("HTML content loaded: %d characters\n", htmlContent.length());
-
-        // Debug: print first 200 characters to verify content
-        if (htmlContent.length() > 200) {
-            Serial.println("HTML preview: " + htmlContent.substring(0, 200) + "...");
-        } else {
-            Serial.println("HTML content: " + htmlContent);
-        }
-    }
 
     // Test with caching enabled (default) and disabled
     bool imageDownloaded = renderAndDownloadImage(htmlContent, imageFilename); // Default: caching enabled (1)
     // bool imageDownloaded = renderAndDownloadImage(htmlContent, imageFilename, 0); // Example: caching disabled (0)
 
-    // Display the PNG on e-ink display (can be disabled for debugging)
+    // Display the image on e-ink display (can be disabled for debugging)
     bool displayEnabled = true; // Set to false to disable display for debugging
     if (displayEnabled) {
         Serial.println("Initializing e-paper display...");
@@ -149,9 +120,9 @@ void setup()
 
         // Initialize display with longer timeout and reset
         Serial.println("Resetting display...");
+        uint32_t dt = millis();
         display.init(115200, true, 30, false); // 30 second timeout, reset=true
-
-        Serial.println("Display initialized successfully");
+        Serial.printf("Display initialized in %lu ms\n", millis() - dt);
 
         display.setRotation(0);
         display.setFullWindow();
@@ -159,10 +130,12 @@ void setup()
         display.setFont(&TimesNRCyr12pt8b);
 
         if (imageDownloaded && displayEnabled) {
-            // Display the image (auto-detects format)
+            // Display the image
             displayImage(imageFilename, 0, 0);
             // Update the display after all writeImage calls are complete
+            uint32_t dtRefresh = millis();
             display.display(false); // false = full update
+            Serial.printf("Full display refresh completed in %lu ms\n", millis() - dtRefresh);
         } else if (!imageDownloaded) {
             // Show error message using firstPage/nextPage for text
             display.firstPage();
@@ -194,12 +167,13 @@ void loop()
 
 void connectWiFi()
 {
+    uint32_t start = millis();
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
     }
-    Serial.println("WiFi connected");
+    Serial.printf("WiFi connected in %lu ms\n", millis() - start);
 }
 
 // Main function to render HTML to image and download it
@@ -243,11 +217,12 @@ bool renderAndDownloadImage(const String& htmlContent, const char* filename, boo
 // Function to download image from render API
 bool downloadImage(const String& url, const String& htmlContent, const char* filename)
 {
+    uint32_t tStart = millis();
     Serial.println("Downloading image...");
     Serial.println("URL: " + String(url));
     HTTPClient http;
     http.begin(url);
-    http.setTimeout(10000); // 10 second timeout
+    http.setTimeout(HTTP_TIMEOUT_MS);
 
     int httpCode;
     // Use POST for render API with HTML content, GET for direct URLs
@@ -262,7 +237,9 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
     http.addHeader("Accept-Encoding", "identity");
     http.addHeader("Connection", "close");
     
+    uint32_t tReq = millis();
     httpCode = http.POST(htmlContent);
+    Serial.printf("HTTP Request completed in %lu ms\n", millis() - tReq);
     Serial.println("Using POST method with cookie prevention");
 
     Serial.printf("HTTP response code: %d\n", httpCode);
@@ -271,7 +248,42 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
         // Get the image data
         int contentLength = http.getSize();
         Serial.println("Http content length: " + String(contentLength) + " bytes");
+        
         if (contentLength > 0) {
+            // Check for free space and cleanup if necessary
+            size_t spiffsTotalBytes = SPIFFS.totalBytes();
+            size_t spiffsUsedBytes = SPIFFS.usedBytes();
+            size_t spiffsFreeBytes = spiffsTotalBytes - spiffsUsedBytes;
+            
+            Serial.printf("SPIFFS Free: %d bytes, Required: %d bytes\n", spiffsFreeBytes, contentLength);
+
+            if (spiffsFreeBytes < contentLength) {
+                Serial.println("Insufficient space. Attempting cleanup...");
+                
+                // Delete the target file if it exists (it might be overwritten anyway, but removing it frees space calculation)
+                if (SPIFFS.exists(filename)) {
+                    Serial.printf("Removing existing target file: %s\n", filename);
+                    SPIFFS.remove(filename);
+                    spiffsFreeBytes = spiffsTotalBytes - SPIFFS.usedBytes();
+                }
+
+                // If still not enough, delete the cache
+                if (spiffsFreeBytes < contentLength) {
+                    if (SPIFFS.exists(CACHED_IMAGE_FILENAME)) {
+                        Serial.printf("Removing cached file to free space: %s\n", CACHED_IMAGE_FILENAME);
+                        SPIFFS.remove(CACHED_IMAGE_FILENAME);
+                        spiffsFreeBytes = spiffsTotalBytes - SPIFFS.usedBytes();
+                    }
+                }
+                
+                Serial.printf("SPIFFS Free after cleanup: %d bytes\n", spiffsFreeBytes);
+            }
+
+            // Always remove the file before writing to ensure fresh start
+            if (SPIFFS.exists(filename)) {
+                SPIFFS.remove(filename);
+            }
+
             // Create file on SPIFFS with detailed error handling
             Serial.printf("Attempting to create file: %s\n", filename);
             File file = SPIFFS.open(filename, FILE_WRITE);
@@ -284,11 +296,9 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
                 Serial.println("- Too many open files");
 
                 // Print SPIFFS status for debugging
-                size_t totalBytes = SPIFFS.totalBytes();
-                size_t usedBytes = SPIFFS.usedBytes();
-                Serial.printf("SPIFFS Total: %d bytes\n", totalBytes);
-                Serial.printf("SPIFFS Used: %d bytes\n", usedBytes);
-                Serial.printf("SPIFFS Free: %d bytes\n", totalBytes - usedBytes);
+                Serial.printf("SPIFFS Total: %d bytes\n", spiffsTotalBytes);
+                Serial.printf("SPIFFS Used: %d bytes\n", spiffsUsedBytes);
+                Serial.printf("SPIFFS Free: %d bytes\n", spiffsTotalBytes - spiffsUsedBytes);
                 Serial.printf("Content length: %d bytes\n", contentLength);
 
                 http.end();
@@ -297,22 +307,25 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
 
             // Get the stream and write to file
             WiFiClient* stream = http.getStreamPtr();
-            uint8_t buffer[512];
+            uint8_t buffer[1024];
             int bytesRead = 0;
             int totalBytes = 0;
 
+            uint32_t tDownload = millis();
             while (http.connected() && (totalBytes < contentLength)) {
                 bytesRead = stream->readBytes(buffer, sizeof(buffer));
                 if (bytesRead > 0) {
                     file.write(buffer, bytesRead);
                     totalBytes += bytesRead;
                 }
-                delay(1);
+                // delay(1); // Removed to improve speed
             }
+            Serial.printf("Stream download and write to SPIFFS in %lu ms\n", millis() - tDownload);
 
             file.close();
             Serial.printf("Image downloaded successfully: %d bytes\n", totalBytes);
             http.end();
+            Serial.printf("Total downloadImage duration: %lu ms\n", millis() - tStart);
             return true;
         }
     } else {
@@ -320,6 +333,7 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
     }
 
     http.end();
+    Serial.printf("Total downloadImage duration (failed): %lu ms\n", millis() - tStart);
     return false;
 }
 
@@ -362,13 +376,8 @@ void displayImage(const char* filename, int16_t x, int16_t y)
     if (magic[0] == 0x42 && magic[1] == 0x4D) {
         Serial.println("Detected BMP format");
         displayBMP(filename, x, y);
-    }
-    // Check for PNG signature (0x89 0x50 0x4E 0x47)
-    else if (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) {
-        Serial.println("Detected PNG format");
-        displayPNG(filename, x, y);
     } else {
-        Serial.printf("Unknown image format: 0x%02X 0x%02X 0x%02X 0x%02X\n",
+        Serial.printf("Unknown or unsupported image format: 0x%02X 0x%02X 0x%02X 0x%02X\n",
             magic[0], magic[1], magic[2], magic[3]);
     }
 }
@@ -476,9 +485,7 @@ void displayBMP(const char* filename, int16_t x, int16_t y)
                     offsetX + startCol, displayRow, visibleWidth, 1);
             }
 
-            Serial.print("BMP loaded in ");
-            Serial.print(millis() - startTime);
-            Serial.println(" ms");
+            Serial.printf("BMP loaded and drawn in %lu ms\n", millis() - startTime);
         } else {
             Serial.printf("Unsupported BMP format: %d-bit, height=%d\n", depth, height);
         }
@@ -568,6 +575,7 @@ bool downloadImageWithRetry(const String& url, const String& htmlContent, const 
 // Function to copy file from source to destination
 bool copyFile(const char* source, const char* destination)
 {
+    uint32_t tStart = millis();
     File sourceFile = SPIFFS.open(source, FILE_READ);
     if (!sourceFile) {
         Serial.printf("Failed to open source file: %s\n", source);
@@ -581,7 +589,7 @@ bool copyFile(const char* source, const char* destination)
         return false;
     }
 
-    uint8_t buffer[512];
+    uint8_t buffer[4096];
     int bytesRead = 0;
     int totalBytes = 0;
 
@@ -597,8 +605,41 @@ bool copyFile(const char* source, const char* destination)
     destFile.close();
 
     Serial.printf("File copied successfully: %s -> %s (%d bytes)\n", source, destination, totalBytes);
+    Serial.printf("File copy completed in %lu ms\n", millis() - tStart);
     return true;
 }
+
+void listDir(const char* dirname, uint8_t levels) {
+    Serial.printf("Listing directory: %s\n", dirname);
+
+    File root = SPIFFS.open(dirname);
+    if (!root) {
+        Serial.println("- failed to open directory");
+        return;
+    }
+    if (!root.isDirectory()) {
+        Serial.println(" - not a directory");
+        return;
+    }
+
+    File file = root.openNextFile();
+    while (file) {
+        if (file.isDirectory()) {
+            Serial.print("  DIR : ");
+            Serial.println(file.name());
+            if (levels) {
+                listDir(file.name(), levels - 1);
+            }
+        } else {
+            Serial.print("  FILE: ");
+            Serial.print(file.name());
+            Serial.print("\tSIZE: ");
+            Serial.println(file.size());
+        }
+        file = root.openNextFile();
+    }
+}
+
 
 // Function to check if file exists
 bool fileExists(const char* filename)
@@ -647,188 +688,7 @@ void displayErrorScreen(const char* title, const char* message)
     display.print("Check API server connection");
 
     display.setCursor(100, messageY + 90);
-    display.print("192.168.2.59:3123");
+    display.print(renderApiUrl);
 
     Serial.println("Error screen displayed");
-}
-
-// ==== PNG Display Functions ====
-
-// PNG file callbacks for PNGdec library
-void* pngOpen(const char* filename, int32_t* size)
-{
-    File* file = new File(SPIFFS.open(filename, FILE_READ));
-    if (*file) {
-        *size = file->size();
-        return file;
-    }
-    delete file;
-    return nullptr;
-}
-
-void pngClose(void* handle)
-{
-    File* file = (File*)handle;
-    if (file) {
-        file->close();
-        delete file;
-    }
-}
-
-int32_t pngRead(PNGFILE* handle, uint8_t* buffer, int32_t length)
-{
-    File* file = (File*)handle->fHandle;
-    if (!file)
-        return 0;
-    return file->read(buffer, length);
-}
-
-int32_t pngSeek(PNGFILE* handle, int32_t position)
-{
-    File* file = (File*)handle->fHandle;
-    if (!file)
-        return -1;
-    if (file->seek(position))
-        return position;
-    return -1;
-}
-
-// PNG draw callback - converts RGB to B/W and color for e-paper
-int pngDraw(PNGDRAW* pDraw)
-{
-    if (!pDraw || !pDraw->pPixels) {
-        Serial.println("PNG draw error: invalid parameters");
-        return 0;
-    }
-
-    uint8_t* pixels = (uint8_t*)pDraw->pPixels;
-    uint16_t w = pDraw->iWidth;
-    uint16_t y = pDraw->y;
-    int pixelType = pDraw->iPixelType;
-
-    // Check if this row is visible on display
-    int16_t displayY = png_offset_y + y;
-    if (y < png_start_row || displayY >= display.epd2.HEIGHT) {
-        return 1; // Skip this row
-    }
-
-    // Clear output buffers
-    memset(output_row_mono_buffer, 0xFF, (png_visible_width + 7) / 8);
-    memset(output_row_color_buffer, 0xFF, (png_visible_width + 7) / 8);
-
-    // Process only visible columns
-    for (uint16_t x = png_start_col; x < png_start_col + png_visible_width && x < w; x++) {
-        uint8_t r, g, b, a = 255;
-
-        // Handle different pixel formats
-        if (pixelType == PNG_PIXEL_TRUECOLOR) {
-            // RGB888 format (3 bytes per pixel)
-            r = pixels[x * 3];
-            g = pixels[x * 3 + 1];
-            b = pixels[x * 3 + 2];
-        } else if (pixelType == PNG_PIXEL_TRUECOLOR_ALPHA) {
-            // RGBA format (4 bytes per pixel)
-            r = pixels[x * 4];
-            g = pixels[x * 4 + 1];
-            b = pixels[x * 4 + 2];
-            a = pixels[x * 4 + 3];
-        } else if (pixelType == PNG_PIXEL_INDEXED) {
-            // Indexed/paletted image - PNGdec should convert to RGB
-            // If we still get indexed data, treat as grayscale
-            uint8_t index = pixels[x];
-            r = g = b = index;
-        } else {
-            // Grayscale - treat pixel value as gray level
-            uint8_t gray = pixels[x];
-            r = g = b = gray;
-        }
-
-        // If pixel is transparent or semi-transparent, treat as white
-        if (a < 128) {
-            // Transparent - keep white (buffer already set to 0xFF)
-            continue;
-        }
-
-        // Determine if whitish
-        bool whitish = (r > 0x80) && (g > 0x80) && (b > 0x80);
-        // Determine if colored (reddish or yellowish)
-        bool colored = (r > 0xF0) || ((g > 0xF0) && (b > 0xF0));
-
-        // Map to output buffer
-        uint16_t outX = x - png_start_col;
-
-        if (!whitish) {
-            if (colored) {
-                // Set color bit
-                output_row_color_buffer[outX / 8] &= ~(0x80 >> (outX % 8));
-            } else {
-                // Set black bit
-                output_row_mono_buffer[outX / 8] &= ~(0x80 >> (outX % 8));
-            }
-        }
-    }
-
-    // Write the row to display
-    display.writeImage(output_row_mono_buffer, output_row_color_buffer,
-        png_offset_x + png_start_col, displayY, png_visible_width, 1);
-    return 1; // success
-}
-
-// Function to display PNG on e-ink display
-void displayPNG(const char* filename, int16_t x, int16_t y)
-{
-    uint32_t startTime = millis();
-
-    Serial.println();
-    Serial.print("Loading PNG image '");
-    Serial.print(filename);
-    Serial.println('\'');
-
-    int rc = png.open(filename, pngOpen, pngClose, pngRead, pngSeek, pngDraw);
-    if (rc == PNG_SUCCESS) {
-        int16_t width = png.getWidth();
-        int16_t height = png.getHeight();
-
-        Serial.printf("Image size: %dx%d, bpp: %d, pixel type: %d\n",
-            width, height, png.getBpp(), png.getPixelType());
-
-        // Calculate offset to center image if smaller than display
-        png_offset_x = (width < display.epd2.WIDTH) ? (display.epd2.WIDTH - width) / 2 : 0;
-        png_offset_y = (height < display.epd2.HEIGHT) ? (display.epd2.HEIGHT - height) / 2 : 0;
-
-        // Apply user offset
-        png_offset_x += x;
-        png_offset_y += y;
-
-        // Calculate visible area
-        png_start_col = (png_offset_x < 0) ? -png_offset_x : 0;
-        png_start_row = (png_offset_y < 0) ? -png_offset_y : 0;
-        int16_t endCol = (png_offset_x + width > display.epd2.WIDTH) ? display.epd2.WIDTH - png_offset_x : width;
-        int16_t endRow = (png_offset_y + height > display.epd2.HEIGHT) ? display.epd2.HEIGHT - png_offset_y : height;
-
-        png_visible_width = endCol - png_start_col;
-
-        Serial.printf("Display offset: (%d,%d), visible: cols[%d:%d] rows[%d:%d]\n",
-            png_offset_x, png_offset_y, png_start_col, endCol, png_start_row, endRow);
-
-        // Set options to convert paletted/indexed images to RGB during decode
-        // This ensures pngDraw callback receives RGB data
-        uint8_t ucOptions = 0;
-        if (png.getPixelType() == PNG_PIXEL_INDEXED) {
-            Serial.println("Indexed PNG detected, will convert to RGB");
-        }
-
-        rc = png.decode(NULL, ucOptions);
-        png.close();
-
-        if (rc == PNG_SUCCESS) {
-            Serial.print("PNG loaded in ");
-            Serial.print(millis() - startTime);
-            Serial.println(" ms");
-        } else {
-            Serial.printf("PNG decode failed with error: %d\n", rc);
-        }
-    } else {
-        Serial.printf("Failed to open PNG file with error: %d\n", rc);
-    }
 }

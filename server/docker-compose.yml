@@ -1,0 +1,42 @@
+services:
+  # Service for AMD64 (Intel/AMD processors)
+  html2png-api-amd64:
+    build:
+      context: .
+      dockerfile: Dockerfile.amd64
+    image: html2png-api:amd64
+    container_name: html2png-api-amd64
+    ports:
+      - "3123:3123"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./config.json:/app/config.json
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3123/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # Service for ARM64 (Apple Silicon, Raspberry Pi, etc.)
+  html2png-api-arm64:
+    build:
+      context: .
+      dockerfile: Dockerfile.arm64
+    image: html2png-api:arm64
+    container_name: html2png-api-arm64
+    ports:
+      - "3124:3123" # Mapped to 3124 to avoid conflict if running both, or change to 3123
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./config.json:/app/config.json
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3123/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s

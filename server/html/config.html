@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iTablet Config</title>
+    <style>
+        body { font-family: sans-serif; padding: 10px; max-width: 100%; overflow-x: hidden; }
+        .controls { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+        .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        input[type="text"], input[type="number"] { padding: 5px; border: 1px solid #ccc; border-radius: 4px; }
+        input[type="text"] { flex-grow: 1; }
+        button { padding: 8px 15px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
+        button:disabled { background: #ccc; }
+        
+        #preview-container {
+            position: relative;
+            border: 1px solid #999;
+            display: inline-block;
+            overflow: hidden; /* Contain the image and crop box */
+            touch-action: none; /* Prevent scrolling while dragging on mobile */
+            max-width: 100%; /* Allow scaling down on mobile if needed, though handling crop coordinates might get tricky if scaled */
+        }
+        
+        #preview-img {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            pointer-events: none; /* Let events pass to the crop box container if needed, but actually we want interactions on the box */
+        }
+
+        #crop-box {
+            position: absolute;
+            border: 2px solid red;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+            cursor: move;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: red;
+            font-weight: bold;
+            font-size: 12px;
+            text-shadow: 0 0 2px white;
+        }
+        
+        /* Resize handles */
+        .handle {
+            position: absolute;
+            width: 20px; /* Larger touch targets */
+            height: 20px;
+            background: red;
+            border-radius: 50%;
+        }
+        .handle.br { bottom: -10px; right: -10px; cursor: se-resize; }
+        
+        @media (max-width: 600px) {
+            .row { flex-direction: column; align-items: stretch; }
+        }
+    </style>
+</head>
+<body>
+    <h3>iTablet Config</h3>
+    
+    <div class="controls">
+        <div class="row">
+            <label>Mode:</label>
+            <select id="mode-select">
+                <option value="url">Web Page (URL)</option>
+                <option value="weather">Dashboard (Internal)</option>
+                <option value="demo">Demo (Test Image)</option>
+            </select>
+        </div>
+        <div class="row" id="url-row">
+            <label>URL:</label>
+            <input type="text" id="url" placeholder="http://example.com">
+        </div>
+        <div class="row">
+            <label>Viewport:</label>
+            <input type="number" id="vp-w" value="800" style="width: 60px"> x 
+            <input type="number" id="vp-h" value="600" style="width: 60px">
+            <label style="margin-left: 10px;">Layout Width:</label>
+            <input type="number" id="layout-w" value="800" style="width: 60px" placeholder="Defaults to Viewport Width">
+            <button id="btn-preview">Load Preview</button>
+        </div>
+        <div class="row">
+            <input type="checkbox" id="dismiss-cookies">
+            <label for="dismiss-cookies">Dismiss Cookie Banners (Try Auto-Accept)</label>
+        </div>
+        <div class="row">
+            <label>Crop:</label>
+            <input type="number" id="crop-x" style="width: 50px">
+            <input type="number" id="crop-y" style="width: 50px">
+            <input type="number" id="crop-w" style="width: 50px">
+            <input type="number" id="crop-h" style="width: 50px">
+        </div>
+        <div class="row">
+            <label>Format:</label>
+            <span>BMP (Fixed)</span>
+        </div>
+        <div class="row">
+            <button id="btn-save" style="background: #28a745;">Save Configuration</button>
+        </div>
+    </div>
+
+    <div id="status" style="margin-bottom: 5px; color: blue;"></div>
+
+    <div id="preview-container">
+        <img id="preview-img" src="" alt="Preview will appear here">
+        <div id="crop-box">
+            <span id="crop-size-label"></span>
+            <div class="handle br"></div>
+        </div>
+    </div>
+
+    <script>
+        const els = {
+            modeSelect: document.getElementById('mode-select'),
+            urlRow: document.getElementById('url-row'),
+            url: document.getElementById('url'),
+            vpW: document.getElementById('vp-w'),
+            vpH: document.getElementById('vp-h'),
+            layoutW: document.getElementById('layout-w'),
+            dismissCookies: document.getElementById('dismiss-cookies'),
+            cropX: document.getElementById('crop-x'),
+            cropY: document.getElementById('crop-y'),
+            cropW: document.getElementById('crop-w'),
+            cropH: document.getElementById('crop-h'),
+            btnPreview: document.getElementById('btn-preview'),
+            btnSave: document.getElementById('btn-save'),
+            previewContainer: document.getElementById('preview-container'),
+            previewImg: document.getElementById('preview-img'),
+            cropBox: document.getElementById('crop-box'),
+            status: document.getElementById('status')
+        };
+
+        let currentConfig = {};
+        let isDragging = false;
+        let isResizing = false;
+        let startX, startY;
+        let startValX, startValY, startValW, startValH;
+
+        function toggleMode() {
+            const isUrl = els.modeSelect.value === 'url';
+            els.urlRow.style.display = isUrl ? 'flex' : 'none';
+        }
+
+        // Load config on start
+        async function loadConfig() {
+            try {
+                const res = await fetch('/config');
+                currentConfig = await res.json();
+                
+                // Determine mode: explicit 'mode' property or inference
+                if (currentConfig.mode === 'weather') {
+                    els.modeSelect.value = 'weather';
+                } else if (currentConfig.mode === 'demo') {
+                    els.modeSelect.value = 'demo';
+                } else {
+                    els.modeSelect.value = 'url';
+                }
+                toggleMode();
+
+                els.url.value = currentConfig.url || '';
+                els.vpW.value = currentConfig.viewport?.width || 800;
+                els.vpH.value = currentConfig.viewport?.height || 600;
+                els.layoutW.value = currentConfig.viewport?.layoutWidth || currentConfig.viewport?.width || 800;
+                els.dismissCookies.checked = !!currentConfig.dismissCookies;
+                
+                updateCropInputs(
+                    currentConfig.crop?.x || 0,
+                    currentConfig.crop?.y || 0,
+                    currentConfig.crop?.width || 800,
+                    currentConfig.crop?.height || 480
+                );
+
+                // Auto load preview
+                loadPreview();
+            } catch (e) {
+                console.error(e);
+                els.status.innerText = "Error loading config.";
+            }
+        }
+
+        function getScale() {
+            const img = els.previewImg;
+            if (!img.naturalWidth) return 1;
+            return img.getBoundingClientRect().width / img.naturalWidth;
+        }
+
+        function updateCropInputs(x, y, w, h) {
+            els.cropX.value = Math.round(x);
+            els.cropY.value = Math.round(y);
+            els.cropW.value = Math.round(w);
+            els.cropH.value = Math.round(h);
+            updateCropBoxVisuals();
+        }
+
+        function updateCropBoxVisuals() {
+            const scale = getScale();
+            const x = parseInt(els.cropX.value) || 0;
+            const y = parseInt(els.cropY.value) || 0;
+            const w = parseInt(els.cropW.value) || 100;
+            const h = parseInt(els.cropH.value) || 100;
+            
+            els.cropBox.style.left = (x * scale) + 'px';
+            els.cropBox.style.top = (y * scale) + 'px';
+            els.cropBox.style.width = (w * scale) + 'px';
+            els.cropBox.style.height = (h * scale) + 'px';
+            document.getElementById('crop-size-label').innerText = `${w}x${h}`;
+        }
+
+        async function loadPreview() {
+            const mode = els.modeSelect.value;
+            const url = els.url.value;
+            
+            if (mode === 'url' && !url) return;
+            
+            els.status.innerText = "Loading preview...";
+            els.btnPreview.disabled = true;
+
+            try {
+                const w = els.vpW.value;
+                const h = els.vpH.value;
+                const lw = els.layoutW.value;
+                const dc = els.dismissCookies.checked;
+                
+                let query = `width=${w}&height=${h}&layoutWidth=${lw}&dismissCookies=${dc}`;
+                if (mode === 'weather') {
+                    query += '&mode=weather&url=internal'; // url param needed to pass check in preview endpoint?
+                } else if (mode === 'demo') {
+                    query += '&mode=demo&url=internal';
+                } else {
+                    query += `&url=${encodeURIComponent(url)}`;
+                }
+
+                // Request preview image
+                const res = await fetch(`/preview?${query}`);
+                if (!res.ok) throw new Error("Failed to load preview");
+                
+                const blob = await res.blob();
+                const imgUrl = URL.createObjectURL(blob);
+                
+                // Wait for image to load to update visuals (scale might change)
+                els.previewImg.onload = () => {
+                    updateCropBoxVisuals();
+                };
+                els.previewImg.src = imgUrl;
+
+                els.status.innerText = "Preview loaded.";
+            } catch (e) {
+                els.status.innerText = "Error: " + e.message;
+            } finally {
+                els.btnPreview.disabled = false;
+            }
+        }
+
+        async function saveConfig() {
+            const mode = els.modeSelect.value;
+            const config = {
+                mode: (mode === 'weather' || mode === 'demo') ? mode : null,
+                url: mode === 'url' ? els.url.value : null,
+                dismissCookies: els.dismissCookies.checked,
+                format: 'bmp',
+                viewport: {
+                    width: parseInt(els.vpW.value),
+                    height: parseInt(els.vpH.value),
+                    layoutWidth: parseInt(els.layoutW.value)
+                },
+                crop: {
+                    x: parseInt(els.cropX.value),
+                    y: parseInt(els.cropY.value),
+                    width: parseInt(els.cropW.value),
+                    height: parseInt(els.cropH.value)
+                }
+            };
+
+            try {
+                const res = await fetch('/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                if (res.ok) {
+                    els.status.innerText = "Config saved!";
+                    setTimeout(() => els.status.innerText = "", 2000);
+                } else {
+                    const errorData = await res.json().catch(() => ({}));
+                    throw new Error(errorData.error || "Save failed");
+                }
+            } catch (e) {
+                els.status.innerText = "Error saving: " + e.message;
+            }
+        }
+
+        // Drag and Resize Logic
+        function handleStart(clientX, clientY, type) {
+            startX = clientX;
+            startY = clientY;
+            
+            startValX = parseInt(els.cropX.value) || 0;
+            startValY = parseInt(els.cropY.value) || 0;
+            startValW = parseInt(els.cropW.value) || 100;
+            startValH = parseInt(els.cropH.value) || 100;
+
+            if (type === 'move') {
+                isDragging = true;
+            } else if (type === 'resize') {
+                isResizing = true;
+            }
+        }
+
+        function handleMove(clientX, clientY) {
+            if (!isDragging && !isResizing) return;
+
+            const scale = getScale();
+            const dx = (clientX - startX) / scale;
+            const dy = (clientY - startY) / scale;
+            
+            const imgW = els.previewImg.naturalWidth;
+            const imgH = els.previewImg.naturalHeight;
+
+            if (isDragging) {
+                let newX = startValX + dx;
+                let newY = startValY + dy;
+                const currentW = startValW;
+                const currentH = startValH;
+
+                // Constrain within image bounds
+                const maxX = Math.max(0, imgW - currentW);
+                const maxY = Math.max(0, imgH - currentH);
+
+                newX = Math.max(0, Math.min(newX, maxX));
+                newY = Math.max(0, Math.min(newY, maxY));
+
+                updateCropInputs(newX, newY, currentW, currentH);
+            } else if (isResizing) {
+                let newW = startValW + dx;
+                let newH = startValH + dy;
+                const currentX = startValX;
+                const currentY = startValY;
+
+                // Constrain within image bounds
+                const maxW = Math.max(10, imgW - currentX);
+                const maxH = Math.max(10, imgH - currentY);
+
+                newW = Math.max(10, Math.min(newW, maxW));
+                newH = Math.max(10, Math.min(newH, maxH));
+
+                updateCropInputs(currentX, currentY, newW, newH);
+            }
+        }
+
+        function handleEnd() {
+            isDragging = false;
+            isResizing = false;
+        }
+
+        // Mouse events
+        els.cropBox.addEventListener('mousedown', (e) => {
+            if (e.target.classList.contains('handle')) {
+                e.preventDefault();
+                handleStart(e.clientX, e.clientY, 'resize');
+            } else {
+                e.preventDefault();
+                handleStart(e.clientX, e.clientY, 'move');
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            handleMove(e.clientX, e.clientY);
+        });
+
+        window.addEventListener('mouseup', handleEnd);
+
+        // Touch events
+        els.cropBox.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            if (e.target.classList.contains('handle')) {
+                e.preventDefault();
+                handleStart(touch.clientX, touch.clientY, 'resize');
+            } else {
+                e.preventDefault();
+                handleStart(touch.clientX, touch.clientY, 'move');
+            }
+        }, {passive: false});
+
+        window.addEventListener('touchmove', (e) => {
+            if (isDragging || isResizing) {
+                e.preventDefault();
+                const touch = e.touches[0];
+                handleMove(touch.clientX, touch.clientY);
+            }
+        }, {passive: false});
+
+        window.addEventListener('touchend', handleEnd);
+        
+        // Update visuals on window resize (image might scale)
+        window.addEventListener('resize', updateCropBoxVisuals);
+
+        // UI Events
+        els.modeSelect.addEventListener('change', toggleMode);
+        els.btnPreview.addEventListener('click', loadPreview);
+        els.btnSave.addEventListener('click', saveConfig);
+        
+        [els.cropX, els.cropY, els.cropW, els.cropH].forEach(el => {
+            el.addEventListener('input', updateCropBoxVisuals);
+        });
+
+        loadConfig();
+    </script>
+</body>
+</html>

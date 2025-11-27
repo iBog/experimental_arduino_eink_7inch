@@ -6,20 +6,257 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
+app.use(express.json()); // Support JSON-encoded bodies
 app.use(express.text({ type: 'text/html', limit: '1mb' }));
+
+const CONFIG_PATH = path.join(__dirname, 'config.json');
+
+// Helper to load config
+function loadConfig() {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    }
+  } catch (e) {
+    console.error("Error loading config:", e);
+  }
+  return {};
+}
+
+// Helper to try accepting cookies
+async function tryToDismissCookies(page) {
+    console.log('Attempting to dismiss cookie banners...');
+    try {
+        const clicked = await page.evaluate(() => {
+            const commonWords = ['accept', 'agree', 'allow', 'принять', 'принять все', 'согласен', 'соглашаюсь', 'ok', 'got it', 'понятно', 'в другой раз'];
+            const blackList = ['settings', 'options', 'custom', 'manage', 'more', 'info', 'policy', 'read', 'learn']; // Don't click "Manage Settings"
+            
+            function isVisible(elem) {
+                return !!(elem.offsetWidth || elem.offsetHeight || elem.getClientRects().length);
+            }
+            
+            function checkText(node) {
+                const text = node.innerText || node.textContent || "";
+                const lower = text.toLowerCase().trim();
+                if (!commonWords.some(w => lower.includes(w))) return false;
+                if (blackList.some(w => lower.includes(w))) return false;
+                return true;
+            }
+
+            // Find potential buttons (button, a, div roles, inputs)
+            const candidates = Array.from(document.querySelectorAll('button, a, div[role="button"], input[type="button"], input[type="submit"], span[role="button"]'));
+            
+            const cookieKeywords = ['cookie', 'consent', 'gdpr', 'privacy', 'banner', 'notice'];
+            
+            let bestCandidate = null;
+            let bestScore = 0; // 2 = in cookie container, 1 = just text match
+
+            for (const btn of candidates) {
+                if (!isVisible(btn)) continue;
+                if (!checkText(btn)) continue;
+                
+                let score = 1;
+                
+                // Check matching text length (shorter is usually better "Accept" vs "Accept and read privacy policy")
+                const textLen = (btn.innerText || "").length;
+                if (textLen > 50) continue; 
+
+                // Check ancestors
+                let parent = btn.parentElement;
+                while (parent && parent !== document.body) {
+                    const attr = (parent.id + " " + parent.className).toLowerCase();
+                    if (cookieKeywords.some(k => attr.includes(k))) {
+                        score = 2;
+                        break;
+                    }
+                    parent = parent.parentElement;
+                }
+                
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestCandidate = btn;
+                }
+            }
+
+            if (bestCandidate) {
+                bestCandidate.click();
+                return true;
+            }
+            return false;
+        });
+
+        if (clicked) {
+            console.log('Clicked a potential cookie consent button.');
+            // Wait a bit for animation/reload
+            await new Promise(r => setTimeout(r, 1000));
+        } else {
+            console.log('No obvious cookie button found.');
+        }
+    } catch (e) {
+        console.error('Error trying to dismiss cookies:', e);
+    }
+}
+
+// Config endpoints
+app.get('/config', (req, res) => {
+  res.json(loadConfig());
+});
+
+app.post('/config', (req, res) => {
+  console.log('Received config save request:', req.body);
+  try {
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(req.body, null, 2));
+    console.log('Config saved successfully to:', CONFIG_PATH);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Error writing config file:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/config.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'html', 'config.html'));
+});
+
+// Health check
+app.get('/health', (req, res) => res.status(200).send('OK'));
+
+// Preview endpoint
+app.get('/preview', async (req, res) => {
+  const url = req.query.url;
+  const mode = req.query.mode;
+  const width = parseInt(req.query.width) || 800;
+  const height = parseInt(req.query.height) || 600;
+  const layoutWidth = parseInt(req.query.layoutWidth) || width; // Optional layout width
+  const dismissCookies = req.query.dismissCookies === 'true';
+
+  if (!url && mode !== 'weather' && mode !== 'demo') return res.status(400).send('Missing url parameter');
+
+  try {
+    const browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    const page = await browser.newPage();
+    
+    // Calculate scaling if a larger layout width is requested
+    let deviceScaleFactor = 1;
+    if (layoutWidth > width) {
+      deviceScaleFactor = width / layoutWidth;
+    }
+
+    await page.setViewport({ 
+        width: layoutWidth, 
+        height: Math.round(height / deviceScaleFactor), // Adjust height to maintain aspect ratio if needed, or just use larger height
+        deviceScaleFactor: deviceScaleFactor
+    });
+    
+    await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36');
+    
+    if (mode === 'weather') {
+        console.log(`Previewing weather mode`);
+        const indexPath = path.join(__dirname, 'html', 'index.html');
+        const contentHtml = fs.readFileSync(indexPath, 'utf8');
+        await page.setContent(contentHtml, { waitUntil: 'networkidle0', timeout: 30000 });
+        
+        try {
+            await page.waitForSelector('body.data-loaded', { timeout: 10000 });
+        } catch (e) {
+            console.warn('Preview timeout waiting for data-loaded');
+        }
+    } else if (mode === 'demo') {
+        console.log(`Previewing demo mode`);
+        const demoHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body { margin: 0; padding: 0; background: white; font-family: sans-serif; overflow: hidden; width: 800px; height: 480px; position: relative; }
+                .rect { position: absolute; border: 2px solid black; }
+                .text { position: absolute; font-size: 20px; font-weight: bold; color: black; }
+                .center-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: red; font-size: 40px; font-weight: bold; }
+            </style>
+        </head>
+        <body>
+            <!-- 5 Concentric Rectangles -->
+            <div class="rect" style="top: 0; left: 0; right: 0; bottom: 0;"></div>
+            <div class="rect" style="top: 10px; left: 10px; right: 10px; bottom: 10px;"></div>
+            <div class="rect" style="top: 20px; left: 20px; right: 20px; bottom: 20px;"></div>
+            <div class="rect" style="top: 30px; left: 30px; right: 30px; bottom: 30px;"></div>
+            <div class="rect" style="top: 40px; left: 40px; right: 40px; bottom: 40px;"></div>
+
+            <!-- Directional Labels -->
+            <div class="text" style="top: 10px; left: 50%; transform: translateX(-50%);">TOP</div>
+            <div class="text" style="bottom: 10px; left: 50%; transform: translateX(-50%);">BOTTOM</div>
+            <div class="text" style="top: 50%; left: 10px; transform: translateY(-50%);">LEFT</div>
+            <div class="text" style="top: 50%; right: 10px; transform: translateY(-50%);">RIGHT</div>
+
+            <!-- Center Text -->
+            <div class="center-text">Hello, World!</div>
+        </body>
+        </html>`;
+        await page.setContent(demoHtml, { waitUntil: 'networkidle0', timeout: 30000 });
+    } else {
+        console.log(`Previewing: ${url} at ${layoutWidth}x${Math.round(height/deviceScaleFactor)} (Output: ${width}x${height}, Scale: ${deviceScaleFactor})`);
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        
+        // Try to dismiss cookies if requested
+        if (dismissCookies) {
+            await tryToDismissCookies(page);
+        }
+    }
+
+    // Wait a bit for dynamic content
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    const screenshotBuffer = await page.screenshot();
+    await browser.close();
+
+    res.set('Content-Type', 'image/png');
+    res.send(screenshotBuffer);
+  } catch (err) {
+    console.error('Preview error:', err);
+    res.status(500).send('Preview generation failed: ' + err.message);
+  }
+});
 
 app.post('/render', async (req, res) => {
   const html = req.body;
-  const url = req.query.url;
+  let url = req.query.url;
   const mode = req.query.mode;
-  const format = (req.query.format || 'png').toLowerCase(); // png or bmp
-  const width = parseInt(req.query.width) || 800; // Default width
-  const height = parseInt(req.query.height) || 480; // Default height
+  
+  // Load config
+  const config = loadConfig();
+  
+  // Determine rendering parameters
+  // If no explicit input provided, fall back to config
+  const useConfig = !html && !url && !mode;
+  
+  let effectiveMode = mode;
+  if (useConfig) {
+      if (config.mode) {
+          effectiveMode = config.mode;
+      }
+      if (config.url && effectiveMode !== 'weather' && effectiveMode !== 'demo') {
+          url = config.url;
+      }
+  }
+
+  // Defaults or overrides
+  const width = parseInt(req.query.width) || (useConfig ? config.viewport?.width : 800) || 800;
+  const height = parseInt(req.query.height) || (useConfig ? config.viewport?.height : 480) || 480;
+  const layoutWidth = parseInt(req.query.layoutWidth) || (useConfig ? config.viewport?.layoutWidth : width) || width;
+  const dismissCookies = (req.query.dismissCookies === 'true') || (useConfig ? !!config.dismissCookies : false);
+
+  // Determine format from query or config
+  const formatRaw = req.query.format || (useConfig ? config.format : null) || 'bmp';
+  const format = formatRaw.toLowerCase();
+
   const baseName = `render_${Date.now()}`;
   const pngPath = path.join(__dirname, `${baseName}.png`);
   const outPath = path.join(__dirname, `${baseName}.${format}`);
 
-  console.log(`Rendering with dimensions: ${width}x${height}, format: ${format}, mode: ${mode || 'default'}`);
+  console.log(`Rendering with dimensions: ${width}x${height}, layoutWidth: ${layoutWidth}, format: ${format}, mode: ${effectiveMode || (useConfig ? 'config' : 'default')}`);
 
   try {
     const browser = await puppeteer.launch({
@@ -33,7 +270,17 @@ app.post('/render', async (req, res) => {
     });
 
     const page = await browser.newPage();
-    await page.setViewport({ width: width, height: height });
+    
+    let deviceScaleFactor = 1;
+    if (layoutWidth > width) {
+      deviceScaleFactor = width / layoutWidth;
+    }
+
+    await page.setViewport({ 
+        width: layoutWidth, 
+        height: Math.round(height / deviceScaleFactor), 
+        deviceScaleFactor: deviceScaleFactor 
+    });
 
     await page.setUserAgent(
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36'
@@ -41,7 +288,7 @@ app.post('/render', async (req, res) => {
 
     let contentHtml = null;
 
-    if (mode === 'weather') {
+    if (effectiveMode === 'weather') {
       console.log(`Using weather mode - loading index.html from server directory`);
       const indexPath = path.join(__dirname, 'html', 'index.html');
       try {
@@ -52,18 +299,55 @@ app.post('/render', async (req, res) => {
         return res.status(500).send(`Ошибка чтения index.html: ${readError.message}`);
       }
       await page.setContent(contentHtml, { waitUntil: 'networkidle0', timeout: 60000 });
+    } else if (effectiveMode === 'demo') {
+        console.log(`Using demo mode - loading test pattern`);
+        const demoHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body { margin: 0; padding: 0; background: white; font-family: sans-serif; overflow: hidden; width: 800px; height: 480px; position: relative; }
+                .rect { position: absolute; border: 2px solid black; }
+                .text { position: absolute; font-size: 20px; font-weight: bold; color: black; }
+                .center-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: red; font-size: 40px; font-weight: bold; }
+            </style>
+        </head>
+        <body>
+            <!-- 5 Concentric Rectangles -->
+            <div class="rect" style="top: 0; left: 0; right: 0; bottom: 0;"></div>
+            <div class="rect" style="top: 10px; left: 10px; right: 10px; bottom: 10px;"></div>
+            <div class="rect" style="top: 20px; left: 20px; right: 20px; bottom: 20px;"></div>
+            <div class="rect" style="top: 30px; left: 30px; right: 30px; bottom: 30px;"></div>
+            <div class="rect" style="top: 40px; left: 40px; right: 40px; bottom: 40px;"></div>
+
+            <!-- Directional Labels -->
+            <div class="text" style="top: 10px; left: 50%; transform: translateX(-50%);">TOP</div>
+            <div class="text" style="bottom: 10px; left: 50%; transform: translateX(-50%);">BOTTOM</div>
+            <div class="text" style="top: 50%; left: 10px; transform: translateY(-50%);">LEFT</div>
+            <div class="text" style="top: 50%; right: 10px; transform: translateY(-50%);">RIGHT</div>
+
+            <!-- Center Text -->
+            <div class="center-text">Hello, World!</div>
+        </body>
+        </html>`;
+        await page.setContent(demoHtml, { waitUntil: 'networkidle0', timeout: 30000 });
     } else if (url) {
       console.log(`Загрузка URL: ${url}`);
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+      
+      // Try to dismiss cookies if requested
+      if (dismissCookies) {
+          await tryToDismissCookies(page);
+      }
     } else if (html) {
       console.log(`Рендер HTML из тела запроса`);
       await page.setContent(html, { waitUntil: 'networkidle0', timeout: 60000 });
     } else {
       await browser.close();
-      return res.status(400).send('Ошибка: передайте HTML в теле запроса, параметр ?url= или заголовок mode=weather');
+      return res.status(400).send('Ошибка: передайте HTML в теле запроса, параметр ?url= или заголовок mode=weather (или настройте config.json)');
     }
 
-    if (mode === 'weather') {
+    if (effectiveMode === 'weather') {
       try {
         console.log('Waiting for data-loaded class...');
         await page.waitForSelector('body.data-loaded', { timeout: 20000 });
@@ -77,7 +361,19 @@ app.post('/render', async (req, res) => {
       await new Promise(resolve => setTimeout(resolve, 5000)); // задержка перед скриншотом
     }
     
-    await page.screenshot({ path: pngPath });
+    // Screenshot options with optional cropping
+    const screenshotOptions = { path: pngPath };
+    if (useConfig && config.crop) {
+        screenshotOptions.clip = {
+            x: config.crop.x / deviceScaleFactor,
+            y: config.crop.y / deviceScaleFactor,
+            width: config.crop.width / deviceScaleFactor,
+            height: config.crop.height / deviceScaleFactor
+        };
+        console.log('Applying crop (adjusted for scale):', screenshotOptions.clip);
+    }
+
+    await page.screenshot(screenshotOptions);
     await browser.close();
 
     if (format === 'bmp') {
@@ -87,14 +383,17 @@ app.post('/render', async (req, res) => {
       fs.unlinkSync(pngPath);
     } else if (format === 'png') {
       // Process PNG with sharp
-      const colors = parseInt(req.query.colors);
+      const colors = parseInt(req.query.colors) || (useConfig ? config.colors : null);
+      const dither = (req.query.dither === 'true') || (useConfig ? !!config.dither : false);
+      
       const options = { 
         compressionLevel: 6,
-        palette: false
+        palette: false,
+        dither: dither ? 1.0 : 0 // 1.0 = diffusion dither, 0 = no dither
       };
       
       // Only add colors if specified and valid (2-256)
-      if (colors >= 2 && colors <= 256) {
+      if (colors && colors >= 2 && colors <= 256) {
         options.palette = true;
         options.colors = colors;
       }

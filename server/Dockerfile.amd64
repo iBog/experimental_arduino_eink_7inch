@@ -1,0 +1,52 @@
+# Use the official Node.js image with Debian Bookworm (Slim version for minimal size)
+FROM node:22-bookworm-slim
+
+# Install latest Chrome Stable and fonts to support major charsets
+# Note: google-chrome-stable is typically amd64 only
+RUN apt-get update \
+    && apt-get install -y wget gnupg curl \
+    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/googlechrome-linux-keyring.gpg \
+    && sh -c 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
+      python3 make g++ \
+      --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set environment variables
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+
+# Create a non-root user 'appuser'
+RUN groupadd -r appuser && useradd -r -g appuser -G audio,video appuser \
+    && mkdir -p /home/appuser \
+    && chown -R appuser:appuser /home/appuser
+
+# Set the working directory
+WORKDIR /app
+# Grant appuser ownership of the working directory
+RUN chown -R appuser:appuser /app
+
+# Copy package files first with correct ownership
+COPY --chown=appuser:appuser package*.json ./
+
+# Force cache invalidation for npm install
+ENV NPM_CACHE_BUST=20240227
+
+# Install dependencies
+RUN npm install
+
+# Copy the rest of the application code with correct ownership
+COPY --chown=appuser:appuser . .
+
+# Ensure config.json exists and is writable by everyone (to fix volume permissions)
+RUN touch config.json && chown appuser:appuser config.json && chmod 666 config.json
+
+# Expose the application port
+EXPOSE 3123
+
+# Switch to the non-root user
+# USER appuser
+
+# Run the application
+CMD ["node", "server.js"]
