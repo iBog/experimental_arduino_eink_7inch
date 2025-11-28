@@ -125,8 +125,8 @@
     // Обновление времени и даты
     function updateDateTime() {
       const now = new Date();
-      document.getElementById('time').textContent = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      document.getElementById('date').textContent = now.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      document.getElementById('time').textContent = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Europe/Minsk' });
+      document.getElementById('date').textContent = now.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Minsk' });
     }
     
     // Обновлять время каждую секунду
