@@ -139,15 +139,13 @@ app.get('/preview', async (req, res) => {
     });
     const page = await browser.newPage();
     
-    // Calculate scaling if a larger layout width is requested
-    let deviceScaleFactor = 1;
-    if (layoutWidth > width) {
-      deviceScaleFactor = width / layoutWidth;
-    }
+    // Force scale factor to 1.0
+    const deviceScaleFactor = 1.0;
+    const viewWidth = layoutWidth > width ? layoutWidth : width;
 
     await page.setViewport({ 
-        width: layoutWidth, 
-        height: Math.round(height / deviceScaleFactor), // Adjust height to maintain aspect ratio if needed, or just use larger height
+        width: viewWidth, 
+        height: height,
         deviceScaleFactor: deviceScaleFactor
     });
     
@@ -271,14 +269,17 @@ app.post('/render', async (req, res) => {
 
     const page = await browser.newPage();
     
-    let deviceScaleFactor = 1;
-    if (layoutWidth > width) {
-      deviceScaleFactor = width / layoutWidth;
-    }
-
+    // Force scale factor to 1.0 to ensure predictable 1:1 pixel mapping
+    // If layoutWidth is larger, we just set the viewport larger.
+    const deviceScaleFactor = 1.0;
+    const viewWidth = layoutWidth > width ? layoutWidth : width;
+    // const viewHeight = Math.round(height * (viewWidth / width)); // Maintain aspect ratio? 
+    // No, simpler: just use the configured height or a larger one if needed. 
+    // actually, for the dashboard, we want 800x480 exact.
+    
     await page.setViewport({ 
-        width: layoutWidth, 
-        height: Math.round(height / deviceScaleFactor), 
+        width: viewWidth, 
+        height: height, 
         deviceScaleFactor: deviceScaleFactor 
     });
 
@@ -381,6 +382,66 @@ app.post('/render', async (req, res) => {
       // Write BMP as-is, let ESP32 handle orientation
       await image.writeAsync(outPath);
       fs.unlinkSync(pngPath);
+    } else if (format === 'bwr') {
+      // Process for GxEPD2 3-color (Black/White/Red) binary format
+      // Output: [BlackPlane][RedPlane]
+      // Packing: 1 bit per pixel, 8 pixels per byte, MSB first.
+      // Logic: 0 = Active (Black or Red), 1 = Inactive (White or No Red)
+      
+      const { data, info } = await sharp(pngPath)
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      const w = info.width;
+      const h = info.height;
+      const stride = Math.ceil(w / 8);
+      const planeSize = stride * h;
+      
+      // Initialize buffers with 0xFF (All 1s -> White / No Red)
+      const bwBuffer = Buffer.alloc(planeSize, 0xFF);
+      const redBuffer = Buffer.alloc(planeSize, 0xFF);
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = (y * w + x) * 4; // RGBA
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          
+          // Calculate squared euclidean distance to palette colors
+          const distBlack = r*r + g*g + b*b;
+          const distWhite = (r-255)**2 + (g-255)**2 + (b-255)**2;
+          const distRed   = (r-255)**2 + g*g + b*b;
+
+          let isBlack = false;
+          let isRed = false;
+
+          // Determine closest color
+          if (distRed < distBlack && distRed < distWhite) {
+            isRed = true;
+          } else if (distBlack <= distWhite) {
+             // Prefer black over white if equidistant? Usually distBlack < distWhite is enough.
+             isBlack = true;
+          }
+          // else White
+
+          const byteIdx = y * stride + Math.floor(x / 8);
+          const bitMask = 0x80 >> (x % 8);
+
+          if (isBlack) {
+            // Black: BW=0, Red=1
+            bwBuffer[byteIdx] &= ~bitMask;
+          } else if (isRed) {
+            // Red: BW=1, Red=0
+            redBuffer[byteIdx] &= ~bitMask;
+          }
+        }
+      }
+      
+      fs.writeFileSync(outPath, Buffer.concat([bwBuffer, redBuffer]));
+      fs.unlinkSync(pngPath);
+
     } else if (format === 'png') {
       // Process PNG with sharp
       const colors = parseInt(req.query.colors) || (useConfig ? config.colors : null);
