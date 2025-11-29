@@ -1,6 +1,7 @@
 #include <Adafruit_GFX.h>
 #include <Arduino.h>
 #include <Fonts/TimesNRCyr12.h>
+#include <Adafruit_NeoPixel.h>
 #include <GxEPD2_3C.h>
 // #include <GxEPD2_3C_SS.h> 
 #include <HTTPClient.h>
@@ -27,6 +28,9 @@ const int RETRY_DELAY_MS = 2000; // 2 seconds between retries
 const int HTTP_TIMEOUT_MS = 60000; // 60 second timeout
 const char* CACHED_IMAGE_FILENAME = "/cached.bin"; // Fallback cached file (Universal name)
 
+#define RGB_PIN 47 // Onboard RGB LED pin
+#define RGB_NUM_PIXELS 1 // Only one LED
+
 // BMP input buffer for 24-bit images
 uint8_t bmp_input_buffer[2400]; // One row of 800 pixels * 3 bytes
 
@@ -37,6 +41,8 @@ uint8_t bmp_input_buffer[2400]; // One row of 800 pixels * 3 bytes
 #define EPD_DC 18
 #define EPD_RST 17
 #define EPD_BUSY 16
+
+Adafruit_NeoPixel rgbPixel(RGB_NUM_PIXELS, RGB_PIN, NEO_GRB + NEO_KHZ800);
 
 GxEPD2_3C<GxEPD2_750c_Z08, GxEPD2_750c_Z08::HEIGHT/4> display(GxEPD2_750c_Z08(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 // GxEPD2_3C_SS<GxEPD2_750c_Z08> display(GxEPD2_750c_Z08(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
@@ -91,10 +97,15 @@ int pngDraw(PNGDRAW *pDraw);
 void setup()
 {
     esp_log_level_set("*", ESP_LOG_DEBUG);
+    rgbPixel.begin();
+    rgbPixel.setBrightness(100); 
     Serial.begin(115200);
     Serial.println("Init e-paper...");
 
     // Initialize SPIFFS for file storage with better error handling
+    rgbPixel.clear();
+    rgbPixel.setPixelColor(0, 0, 255, 0); // RGB color
+    rgbPixel.show();
     Serial.println("Initializing SPIFFS...");
     if (!SPIFFS.begin(true)) {
         Serial.println("SPIFFS initialization failed!");
@@ -131,7 +142,9 @@ void setup()
         
         Serial.printf("SPIFFS Free after cleanup: %d bytes\n", SPIFFS.totalBytes() - SPIFFS.usedBytes());
     }
-
+    
+    rgbPixel.setPixelColor(0, 0, 0, 255); // RGB color
+    rgbPixel.show();
     connectWiFi();
 
     // Universal image filename
