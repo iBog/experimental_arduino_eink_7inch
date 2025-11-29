@@ -1,13 +1,13 @@
 #include <Adafruit_GFX.h>
+#include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <Fonts/TimesNRCyr12.h>
-#include <Adafruit_NeoPixel.h>
 #include <GxEPD2_3C.h>
-// #include <GxEPD2_3C_SS.h> 
+// #include <GxEPD2_3C_SS.h>
 #include <HTTPClient.h>
+#include <PNGdec.h>
 #include <SPIFFS.h>
 #include <WiFi.h>
-#include <PNGdec.h>
 
 // Render API configuration
 // const char* renderApiUrl = "http://192.168.2.139:3123/render?format=bmp&width=100&height=100";
@@ -16,7 +16,7 @@
 // const char* renderApiUrl = "http://192.168.2.139:3123/render?url=https://mediametrics.ru/rating/ru&format=png&width=800&height=480";
 // const char* renderApiUrl = "http://192.168.2.139:3123/render?url=https://www.bbc.com&format=bmp&contrast=1";
 // const char* renderApiUrl = "http://192.168.2.139:3123/render?mode=weather&format=bmp&width=800&height=478";
-const char* renderApiUrl = "http://192.168.2.139:3123/render?format=png";
+const char* renderApiUrl = "http://192.168.2.139:3123/render?format=bwr";
 
 // WiFi credentials
 const char* ssid = "bogswifi5";
@@ -28,7 +28,9 @@ const int RETRY_DELAY_MS = 2000; // 2 seconds between retries
 const int HTTP_TIMEOUT_MS = 60000; // 60 second timeout
 const char* CACHED_IMAGE_FILENAME = "/cached.bin"; // Fallback cached file (Universal name)
 
-#define RGB_PIN 47 // Onboard RGB LED pin
+#define LED_PIN 2 // LED power pin
+#define RGB_PIN 48 // Onboard RGB LED pin
+#define RGB_NUM_PIXELS 1 // Only one LED
 #define RGB_NUM_PIXELS 1 // Only one LED
 
 // BMP input buffer for 24-bit images
@@ -43,8 +45,9 @@ uint8_t bmp_input_buffer[2400]; // One row of 800 pixels * 3 bytes
 #define EPD_BUSY 16
 
 Adafruit_NeoPixel rgbPixel(RGB_NUM_PIXELS, RGB_PIN, NEO_GRB + NEO_KHZ800);
+uint32_t ledColorState = rgbPixel.Color(0xE1, 0x7C, 0x3D); // #E17C3D
 
-GxEPD2_3C<GxEPD2_750c_Z08, GxEPD2_750c_Z08::HEIGHT/4> display(GxEPD2_750c_Z08(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
+GxEPD2_3C<GxEPD2_750c_Z08, GxEPD2_750c_Z08::HEIGHT / 4> display(GxEPD2_750c_Z08(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 // GxEPD2_3C_SS<GxEPD2_750c_Z08> display(GxEPD2_750c_Z08(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 
 // Buffer declarations for image display
@@ -75,36 +78,44 @@ uint16_t read16(File& f);
 uint32_t read32(File& f);
 
 // PNGdec Callbacks
-void * pngOpen(const char *filename, int32_t *size) {
-  pngFile = SPIFFS.open(filename, "r");
-  if (!pngFile) return NULL;
-  *size = pngFile.size();
-  return &pngFile;
+void* pngOpen(const char* filename, int32_t* size)
+{
+    pngFile = SPIFFS.open(filename, "r");
+    if (!pngFile)
+        return NULL;
+    *size = pngFile.size();
+    return &pngFile;
 }
-void pngClose(void *handle) {
-  if (pngFile) pngFile.close();
+void pngClose(void* handle)
+{
+    if (pngFile)
+        pngFile.close();
 }
-int32_t pngRead(PNGFILE *handle, uint8_t *buffer, int32_t length) {
-  if (!pngFile) return 0;
-  return pngFile.read(buffer, length);
+int32_t pngRead(PNGFILE* handle, uint8_t* buffer, int32_t length)
+{
+    if (!pngFile)
+        return 0;
+    return pngFile.read(buffer, length);
 }
-int32_t pngSeek(PNGFILE *handle, int32_t position) {
-  if (!pngFile) return 0;
-  return pngFile.seek(position);
+int32_t pngSeek(PNGFILE* handle, int32_t position)
+{
+    if (!pngFile)
+        return 0;
+    return pngFile.seek(position);
 }
-int pngDraw(PNGDRAW *pDraw);
+int pngDraw(PNGDRAW* pDraw);
 
 void setup()
 {
     esp_log_level_set("*", ESP_LOG_DEBUG);
     rgbPixel.begin();
-    rgbPixel.setBrightness(100); 
+    rgbPixel.setBrightness(1);
     Serial.begin(115200);
     Serial.println("Init e-paper...");
 
     // Initialize SPIFFS for file storage with better error handling
     rgbPixel.clear();
-    rgbPixel.setPixelColor(0, 0, 255, 0); // RGB color
+    rgbPixel.setPixelColor(0, ledColorState); // RGB color
     rgbPixel.show();
     Serial.println("Initializing SPIFFS...");
     if (!SPIFFS.begin(true)) {
@@ -123,14 +134,14 @@ void setup()
         Serial.printf("SPIFFS Total: %d bytes\n", totalBytes);
         Serial.printf("SPIFFS Used: %d bytes\n", usedBytes);
         Serial.printf("SPIFFS Free: %d bytes\n", totalBytes - usedBytes);
-        
+
         // List all files to see what's taking up space
         listDir("/", 0);
 
         // Cleanup legacy files to ensure sufficient space
         // Clean old specific names
         const char* filesToDelete[] = {
-            "/converted.bmp", "/cached.img", "/cached.png", "/rendered.bmp", 
+            "/converted.bmp", "/cached.img", "/cached.png", "/rendered.bmp",
             "/rendered.png", "/rendered.bin", "/cached.bmp", "/image.bin"
         };
         for (const char* f : filesToDelete) {
@@ -139,11 +150,11 @@ void setup()
                 SPIFFS.remove(f);
             }
         }
-        
+
         Serial.printf("SPIFFS Free after cleanup: %d bytes\n", SPIFFS.totalBytes() - SPIFFS.usedBytes());
     }
-    
-    rgbPixel.setPixelColor(0, 0, 0, 255); // RGB color
+    ledColorState = rgbPixel.Color(0x3C, 0x98, 0xB9); // #3C98B9
+    rgbPixel.setPixelColor(0, ledColorState); // RGB color
     rgbPixel.show();
     connectWiFi();
 
@@ -152,6 +163,10 @@ void setup()
 
     // Read HTML content from file dynamically
     String htmlContent = "";
+
+    ledColorState = rgbPixel.Color(0x3F, 0x64, 0xE7); // #3F64E7
+    rgbPixel.setPixelColor(0, ledColorState); // RGB color
+    rgbPixel.show();
 
     // Test with caching enabled (default) and disabled
     bool imageDownloaded = renderAndDownloadImage(htmlContent, imageFilename); // Default: caching enabled (1)
@@ -177,14 +192,21 @@ void setup()
         display.setFont(&TimesNRCyr12pt8b);
 
         if (imageDownloaded && displayEnabled) {
+            ledColorState = rgbPixel.Color(0xE7, 0xE4, 0x3F); // #E7E43FFF
+            rgbPixel.setPixelColor(0, ledColorState); // RGB color
+            rgbPixel.show();
             // Display the image (auto-detect format)
             displayImage(imageFilename, 0, 0);
-            
-            // Update the display after all writeImage calls are complete
+
+            // Trigger refresh without overwriting controller memory
+            // (writeImage writes directly to controller, display.display() would overwrite with buffer)
             uint32_t dtRefresh = millis();
-            display.display(false); // false = full update
+            display.epd2.refresh(false); // false = full update, keeps controller memory
             Serial.printf("Full display refresh completed in %lu ms\n", millis() - dtRefresh);
         } else if (!imageDownloaded) {
+            ledColorState = rgbPixel.Color(0xC0, 0x41, 0x33); // #C04133FF
+            rgbPixel.setPixelColor(0, ledColorState); // RGB color
+            rgbPixel.show();
             // Show error message using firstPage/nextPage for text
             display.firstPage();
             do {
@@ -202,6 +224,13 @@ void setup()
     }
     // Put ESP32 into deep sleep for 1 hours
     Serial.println("Entering deep sleep for 1 hours...");
+    // LED PowerOff
+    digitalWrite(LED_PIN, LOW);
+    // RGB PowerOff
+    rgbPixel.setBrightness(0);
+    ledColorState = rgbPixel.Color(0, 0, 0);
+    rgbPixel.setPixelColor(0, ledColorState); // RGB color
+    rgbPixel.show();
     display.powerOff();
     esp_sleep_enable_timer_wakeup(1 * 60 * 60 * 1000000ULL); // 1 hours in microseconds
     esp_deep_sleep_start();
@@ -280,12 +309,12 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
     http.addHeader("Cookie", ""); // Clear any existing cookies
     http.addHeader("Cache-Control", "no-cache");
     http.addHeader("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36");
-    
+
     // Additional headers to prevent tracking and cookies
     http.addHeader("Accept", "*/*");
     http.addHeader("Accept-Encoding", "identity");
     http.addHeader("Connection", "close");
-    
+
     uint32_t tReq = millis();
     httpCode = http.POST(htmlContent);
     Serial.printf("HTTP Request completed in %lu ms\n", millis() - tReq);
@@ -297,18 +326,18 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
         // Get the image data
         int contentLength = http.getSize();
         Serial.println("Http content length: " + String(contentLength) + " bytes");
-        
+
         if (contentLength > 0) {
             // Check for free space and cleanup if necessary
             size_t spiffsTotalBytes = SPIFFS.totalBytes();
             size_t spiffsUsedBytes = SPIFFS.usedBytes();
             size_t spiffsFreeBytes = spiffsTotalBytes - spiffsUsedBytes;
-            
+
             Serial.printf("SPIFFS Free: %d bytes, Required: %d bytes\n", spiffsFreeBytes, contentLength);
 
             if (spiffsFreeBytes < contentLength) {
                 Serial.println("Insufficient space. Attempting cleanup...");
-                
+
                 // Delete the target file if it exists
                 if (SPIFFS.exists(filename)) {
                     Serial.printf("Removing existing target file: %s\n", filename);
@@ -324,7 +353,7 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
                         spiffsFreeBytes = spiffsTotalBytes - SPIFFS.usedBytes();
                     }
                 }
-                
+
                 Serial.printf("SPIFFS Free after cleanup: %d bytes\n", spiffsFreeBytes);
             }
 
@@ -344,7 +373,7 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
 
             // Get the stream and write to file
             WiFiClient* stream = http.getStreamPtr();
-            
+
             // Use a larger buffer for faster writes (8KB)
             const size_t buffSize = 8192;
             uint8_t* buffer = (uint8_t*)malloc(buffSize);
@@ -352,7 +381,7 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
                 Serial.println("Failed to allocate download buffer, using fallback small buffer");
                 buffer = (uint8_t*)malloc(1024); // Fallback
             }
-            
+
             int bytesRead = 0;
             int totalBytes = 0;
             uint32_t tDownload = millis();
@@ -365,7 +394,7 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
                     // Read as much as possible up to buffer size
                     int toRead = (available > buffSize) ? buffSize : available;
                     bytesRead = stream->read(buffer, toRead);
-                    
+
                     if (bytesRead > 0) {
                         file.write(buffer, bytesRead);
                         totalBytes += bytesRead;
@@ -380,7 +409,7 @@ bool downloadImage(const String& url, const String& htmlContent, const char* fil
                     }
                 }
             }
-            
+
             free(buffer); // Clean up buffer
 
             Serial.printf("Stream download and write to SPIFFS in %lu ms\n", millis() - tDownload);
@@ -433,17 +462,17 @@ void displayImage(const char* filename, int16_t x, int16_t y)
     size_t bytesRead = file.read(magic, 8);
     size_t fileSize = file.size();
     file.close();
-    
+
     if (bytesRead < 2) {
-         Serial.println("File too small");
-         return;
+        Serial.println("File too small");
+        return;
     }
 
     // Check for BMP signature (BM = 0x42 0x4D)
     if (magic[0] == 0x42 && magic[1] == 0x4D) {
         Serial.println("Detected BMP format");
         displayBMP(filename, x, y);
-    } 
+    }
     // Check for PNG signature (89 50 4E 47 0D 0A 1A 0A)
     else if (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) {
         Serial.println("Detected PNG format");
@@ -454,8 +483,7 @@ void displayImage(const char* filename, int16_t x, int16_t y)
     else if (fileSize == 96000) {
         Serial.println("Detected BWR format (based on size)");
         displayBWR(filename, x, y);
-    }
-    else {
+    } else {
         Serial.printf("Unknown or unsupported image format: 0x%02X 0x%02X 0x%02X 0x%02X\n",
             magic[0], magic[1], magic[2], magic[3]);
         Serial.printf("File size: %d\n", fileSize);
@@ -466,171 +494,178 @@ void displayImage(const char* filename, int16_t x, int16_t y)
 // Function: displayBMP
 // Renders a BMP from SPIFFS
 // ================================================================
-void displayBMP(const char* filename, int16_t x, int16_t y) {
-  
-  File file = SPIFFS.open(filename, FILE_READ);
-  if (!file) {
-    Serial.printf("File not found: %s\n", filename);
-    return;
-  }
+void displayBMP(const char* filename, int16_t x, int16_t y)
+{
 
-  if (read16(file) != 0x4D42) {
-    Serial.println("Invalid BMP signature");
-    file.close();
-    return;
-  }
-
-  read32(file); // fileSize
-  read32(file); // creatorBytes
-  uint32_t imageOffset = read32(file);
-  read32(file); // headerSize
-  int32_t w = read32(file);
-  int32_t h = (int32_t)read32(file);
-  
-  bool topDown = (h < 0);
-  int32_t height = abs(h);
-  int32_t width = w;
-
-  int16_t planes = read16(file);
-  uint16_t depth = read16(file);
-
-  if (depth != 24 && depth != 32) {
-    Serial.printf("Unsupported depth: %d\n", depth);
-    file.close();
-    return;
-  }
-
-  Serial.printf("Loading BMP %s (%dx%d, 24-bit)\n", filename, width, height);
-  uint32_t startTime = millis();
-
-  uint32_t rowSize = (width * 3 + 3) & ~3; 
-  uint8_t sdbuffer[3 * 800]; 
-
-  for (int16_t row = 0; row < height; row++) {
-    if (y + row >= display.epd2.HEIGHT) break;
-
-    int16_t fileRow = topDown ? row : (height - 1 - row);
-    uint32_t pos = imageOffset + (fileRow * rowSize);
-    
-    file.seek(pos);
-    if (file.read(sdbuffer, width * 3) != width * 3) break;
-
-    memset(output_row_mono_buffer, 0xFF, sizeof(output_row_mono_buffer));
-    memset(output_row_color_buffer, 0xFF, sizeof(output_row_color_buffer));
-
-    for (int16_t col = 0; col < width; col++) {
-      if (x + col >= display.epd2.WIDTH) break; 
-
-      uint8_t b = sdbuffer[col * 3];
-      uint8_t g = sdbuffer[col * 3 + 1];
-      uint8_t r = sdbuffer[col * 3 + 2];
-
-      bool isRed = (r > 127) && (g < 100) && (b < 100); 
-      bool isWhite = (r > 200) && (g > 200) && (b > 200);
-      
-      uint8_t bitMask = ~(1 << (7 - (col % 8))); 
-      int byteIdx = col / 8;
-
-      if (isRed) {
-        output_row_color_buffer[byteIdx] &= bitMask; 
-      } 
-      else if (!isWhite) {
-        output_row_mono_buffer[byteIdx] &= bitMask;
-      }
+    File file = SPIFFS.open(filename, FILE_READ);
+    if (!file) {
+        Serial.printf("File not found: %s\n", filename);
+        return;
     }
 
-    display.writeImage(output_row_mono_buffer, output_row_color_buffer, x, y + row, width, 1);
-  }
+    if (read16(file) != 0x4D42) {
+        Serial.println("Invalid BMP signature");
+        file.close();
+        return;
+    }
 
-  file.close();
-  Serial.printf("BMP Loaded in %lu ms\n", millis() - startTime);
+    read32(file); // fileSize
+    read32(file); // creatorBytes
+    uint32_t imageOffset = read32(file);
+    read32(file); // headerSize
+    int32_t w = read32(file);
+    int32_t h = (int32_t)read32(file);
+
+    bool topDown = (h < 0);
+    int32_t height = abs(h);
+    int32_t width = w;
+
+    int16_t planes = read16(file);
+    uint16_t depth = read16(file);
+
+    if (depth != 24 && depth != 32) {
+        Serial.printf("Unsupported depth: %d\n", depth);
+        file.close();
+        return;
+    }
+
+    Serial.printf("Loading BMP %s (%dx%d, 24-bit)\n", filename, width, height);
+    uint32_t startTime = millis();
+
+    uint32_t rowSize = (width * 3 + 3) & ~3;
+    uint8_t sdbuffer[3 * 800];
+
+    for (int16_t row = 0; row < height; row++) {
+        if (y + row >= display.epd2.HEIGHT)
+            break;
+
+        int16_t fileRow = topDown ? row : (height - 1 - row);
+        uint32_t pos = imageOffset + (fileRow * rowSize);
+
+        file.seek(pos);
+        if (file.read(sdbuffer, width * 3) != width * 3)
+            break;
+
+        memset(output_row_mono_buffer, 0xFF, sizeof(output_row_mono_buffer));
+        memset(output_row_color_buffer, 0xFF, sizeof(output_row_color_buffer));
+
+        for (int16_t col = 0; col < width; col++) {
+            if (x + col >= display.epd2.WIDTH)
+                break;
+
+            uint8_t b = sdbuffer[col * 3];
+            uint8_t g = sdbuffer[col * 3 + 1];
+            uint8_t r = sdbuffer[col * 3 + 2];
+
+            bool isRed = (r > 127) && (g < 100) && (b < 100);
+            bool isWhite = (r > 200) && (g > 200) && (b > 200);
+
+            uint8_t bitMask = ~(1 << (7 - (col % 8)));
+            int byteIdx = col / 8;
+
+            if (isRed) {
+                output_row_color_buffer[byteIdx] &= bitMask;
+            } else if (!isWhite) {
+                output_row_mono_buffer[byteIdx] &= bitMask;
+            }
+        }
+
+        display.writeImage(output_row_mono_buffer, output_row_color_buffer, x, y + row, width, 1);
+    }
+
+    file.close();
+    Serial.printf("BMP Loaded in %lu ms\n", millis() - startTime);
 }
 
 // ================================================================
 // Function: displayPNG
 // Renders a PNG from SPIFFS using PNGdec
 // ================================================================
-void displayPNG(const char* filename, int16_t x, int16_t y) {
-  Serial.printf("Loading PNG %s\n", filename);
-  uint32_t startTime = millis();
-  
-  int rc = png.open(filename, pngOpen, pngClose, pngRead, pngSeek, pngDraw);
-  if (rc == PNG_SUCCESS) {
-    Serial.printf("PNG image specs: %d x %d, %d bpp, pixel type: %d\n", 
-                  png.getWidth(), png.getHeight(), png.getBpp(), png.getPixelType());
-    
-    png_x = x;
-    png_y = y;
-    
-    // Decode image, line by line
-    // options: 0 for normal, PNG_FAST for faster but less accurate?
-    rc = png.decode(NULL, 0); 
-    Serial.printf("PNG Decode Result: %d\n", rc);
-    
-    png.close();
-    Serial.printf("PNG Loaded in %lu ms\n", millis() - startTime);
-  } else {
-    Serial.printf("Failed to open PNG: %d\n", rc);
-  }
+void displayPNG(const char* filename, int16_t x, int16_t y)
+{
+    Serial.printf("Loading PNG %s\n", filename);
+    uint32_t startTime = millis();
+
+    int rc = png.open(filename, pngOpen, pngClose, pngRead, pngSeek, pngDraw);
+    if (rc == PNG_SUCCESS) {
+        Serial.printf("PNG image specs: %d x %d, %d bpp, pixel type: %d\n",
+            png.getWidth(), png.getHeight(), png.getBpp(), png.getPixelType());
+
+        png_x = x;
+        png_y = y;
+
+        // Decode image, line by line
+        // options: 0 for normal, PNG_FAST for faster but less accurate?
+        rc = png.decode(NULL, 0);
+        Serial.printf("PNG Decode Result: %d\n", rc);
+
+        png.close();
+        Serial.printf("PNG Loaded in %lu ms\n", millis() - startTime);
+    } else {
+        Serial.printf("Failed to open PNG: %d\n", rc);
+    }
 }
 
 // PNG Draw Callback - called for each line
-int pngDraw(PNGDRAW *pDraw) {
-  // Convert the line to RGB565 (since RGB888 might not be available)
-  uint16_t rgbBuffer[max_row_width];
-  
-  // Initialize buffer to White (0xFFFF) to prevent black noise if decode fails
-  for (int i = 0; i < max_row_width; i++) rgbBuffer[i] = 0xFFFF;
+int pngDraw(PNGDRAW* pDraw)
+{
+    // Convert the line to RGB565 (since RGB888 might not be available)
+    uint16_t rgbBuffer[max_row_width];
 
-  // PNGdec 1.0.1: 0 for Little Endian? Or 1? 
-  // Standard assumption: 0 = No Swap (Little Endian on ESP32)
-  png.getLineAsRGB565(pDraw, rgbBuffer, 0, 0xffffffff);
-  
-  memset(output_row_mono_buffer, 0xFF, sizeof(output_row_mono_buffer));
-  memset(output_row_color_buffer, 0xFF, sizeof(output_row_color_buffer));
-  
-  int width = pDraw->iWidth;
-  int row = pDraw->y;
-  
-  // Ensure we don't write out of bounds of the display buffers
-  if (width > max_row_width) width = max_row_width;
+    // Initialize buffer to White (0xFFFF) to prevent black noise if decode fails
+    for (int i = 0; i < max_row_width; i++)
+        rgbBuffer[i] = 0xFFFF;
 
-  // Debug: Check first pixel of the row
-  if (row % 100 == 0 || row == 0) {
-      uint16_t p = rgbBuffer[0];
-      uint8_t r = (p >> 11) * 255 / 31;
-      uint8_t g = ((p >> 5) & 0x3F) * 255 / 63;
-      uint8_t b = (p & 0x1F) * 255 / 31;
-      Serial.printf("Row %d, Pixel 0: 0x%04X -> R:%d G:%d B:%d\n", row, p, r, g, b);
-  }
+    // PNGdec 1.0.1: 0 for Little Endian? Or 1?
+    // Standard assumption: 0 = No Swap (Little Endian on ESP32)
+    png.getLineAsRGB565(pDraw, rgbBuffer, 0, 0xffffffff);
 
-  for (int i = 0; i < width; i++) {
-      if (png_x + i >= display.epd2.WIDTH) break;
-      
-      uint16_t pixel = rgbBuffer[i];
-      
-      // Unpack RGB565 to RGB888 using standard formula
-      uint8_t r = (pixel >> 11) * 255 / 31;
-      uint8_t g = ((pixel >> 5) & 0x3F) * 255 / 63;
-      uint8_t b = (pixel & 0x1F) * 255 / 31;
-      
-      // Using same threshold logic as BMP
-      bool isRed = (r > 127) && (g < 100) && (b < 100); 
-      bool isWhite = (r > 200) && (g > 200) && (b > 200);
-      
-      uint8_t bitMask = ~(1 << (7 - (i % 8))); 
-      int byteIdx = i / 8;
-      
-      if (isRed) {
-        output_row_color_buffer[byteIdx] &= bitMask; 
-      } 
-      else if (!isWhite) {
-        output_row_mono_buffer[byteIdx] &= bitMask;
-      }
-  }
-  
-  display.writeImage(output_row_mono_buffer, output_row_color_buffer, png_x, png_y + row, width, 1);
-  return 1;
+    memset(output_row_mono_buffer, 0xFF, sizeof(output_row_mono_buffer));
+    memset(output_row_color_buffer, 0xFF, sizeof(output_row_color_buffer));
+
+    int width = pDraw->iWidth;
+    int row = pDraw->y;
+
+    // Ensure we don't write out of bounds of the display buffers
+    if (width > max_row_width)
+        width = max_row_width;
+
+    // Debug: Check first pixel of the row
+    if (row % 100 == 0 || row == 0) {
+        uint16_t p = rgbBuffer[0];
+        uint8_t r = (p >> 11) * 255 / 31;
+        uint8_t g = ((p >> 5) & 0x3F) * 255 / 63;
+        uint8_t b = (p & 0x1F) * 255 / 31;
+        Serial.printf("Row %d, Pixel 0: 0x%04X -> R:%d G:%d B:%d\n", row, p, r, g, b);
+    }
+
+    for (int i = 0; i < width; i++) {
+        if (png_x + i >= display.epd2.WIDTH)
+            break;
+
+        uint16_t pixel = rgbBuffer[i];
+
+        // Unpack RGB565 to RGB888 using standard formula
+        uint8_t r = (pixel >> 11) * 255 / 31;
+        uint8_t g = ((pixel >> 5) & 0x3F) * 255 / 63;
+        uint8_t b = (pixel & 0x1F) * 255 / 31;
+
+        // Using same threshold logic as BMP
+        bool isRed = (r > 127) && (g < 100) && (b < 100);
+        bool isWhite = (r > 200) && (g > 200) && (b > 200);
+
+        uint8_t bitMask = ~(1 << (7 - (i % 8)));
+        int byteIdx = i / 8;
+
+        if (isRed) {
+            output_row_color_buffer[byteIdx] &= bitMask;
+        } else if (!isWhite) {
+            output_row_mono_buffer[byteIdx] &= bitMask;
+        }
+    }
+
+    display.writeImage(output_row_mono_buffer, output_row_color_buffer, png_x, png_y + row, width, 1);
+    return 1;
 }
 
 // ================================================================
@@ -639,7 +674,8 @@ int pngDraw(PNGDRAW *pDraw) {
 // Format: [BlackPlane][RedPlane], 1 bit per pixel
 // Optimized: Reads entire planes into RAM/PSRAM to avoid seeking
 // ================================================================
-void displayBWR(const char* filename, int16_t x, int16_t y) {
+void displayBWR(const char* filename, int16_t x, int16_t y)
+{
     File file = SPIFFS.open(filename, FILE_READ);
     if (!file) {
         Serial.printf("File not found: %s\n", filename);
@@ -652,7 +688,7 @@ void displayBWR(const char* filename, int16_t x, int16_t y) {
     int32_t height = 480;
     int32_t stride = (width + 7) / 8; // 100 bytes
     int32_t planeSize = stride * height; // 48000 bytes
-    
+
     Serial.printf("Loading BWR %s (%dx%d) to RAM\n", filename, width, height);
     uint32_t startTime = millis();
 
@@ -664,8 +700,10 @@ void displayBWR(const char* filename, int16_t x, int16_t y) {
 
     if (!blackPlane || !redPlane) {
         Serial.println("Failed to allocate memory for BWR planes!");
-        if (blackPlane) free(blackPlane);
-        if (redPlane) free(redPlane);
+        if (blackPlane)
+            free(blackPlane);
+        if (redPlane)
+            free(redPlane);
         file.close();
         return;
     }
@@ -674,34 +712,41 @@ void displayBWR(const char* filename, int16_t x, int16_t y) {
     Serial.println("Reading Black Plane...");
     if (file.read(blackPlane, planeSize) != planeSize) {
         Serial.println("Read error: Black Plane");
-        free(blackPlane); free(redPlane); file.close(); return;
+        free(blackPlane);
+        free(redPlane);
+        file.close();
+        return;
     }
 
     // Read Red Plane
     Serial.println("Reading Red Plane...");
     if (file.read(redPlane, planeSize) != planeSize) {
         Serial.println("Read error: Red Plane");
-        free(blackPlane); free(redPlane); file.close(); return;
+        free(blackPlane);
+        free(redPlane);
+        file.close();
+        return;
     }
-    
+
     file.close();
     uint32_t readTime = millis() - startTime;
     Serial.printf("File Read Time: %lu ms. Starting Render...\n", readTime);
 
     // Render loop - purely from RAM, super fast
     for (int16_t row = 0; row < height; row++) {
-         if (y + row >= display.epd2.HEIGHT) break;
-         
-         // Pointers to current row in memory
-         uint8_t* bRow = blackPlane + (row * stride);
-         uint8_t* rRow = redPlane + (row * stride);
-         
-         display.writeImage(bRow, rRow, x, y + row, width, 1);
+        if (y + row >= display.epd2.HEIGHT)
+            break;
+
+        // Pointers to current row in memory
+        uint8_t* bRow = blackPlane + (row * stride);
+        uint8_t* rRow = redPlane + (row * stride);
+
+        display.writeImage(bRow, rRow, x, y + row, width, 1);
     }
-    
+
     free(blackPlane);
     free(redPlane);
-    
+
     Serial.printf("BWR Loaded & Rendered in %lu ms\n", millis() - startTime);
 }
 
@@ -718,9 +763,9 @@ void printBMPInfo(const char* filename)
 
     Serial.println();
     Serial.println("=== BMP File Information ===");
-    
+
     // Basic check
-    if (read16(file) == 0x4D42) { 
+    if (read16(file) == 0x4D42) {
         // ... minimal info or full
         Serial.println("Valid BMP");
     }
@@ -732,59 +777,79 @@ void printBMPInfo(const char* filename)
 
 // ... Restoring other helpers ...
 
-bool downloadImageWithRetry(const String& url, const String& htmlContent, const char* filename) {
+bool downloadImageWithRetry(const String& url, const String& htmlContent, const char* filename)
+{
     // Implementation as before
     for (int attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
-        if (downloadImage(url, htmlContent, filename)) return true;
+        if (downloadImage(url, htmlContent, filename))
+            return true;
         delay(RETRY_DELAY_MS);
     }
     return false;
 }
 
-bool copyFile(const char* source, const char* destination) {
+bool copyFile(const char* source, const char* destination)
+{
     File sourceFile = SPIFFS.open(source, FILE_READ);
-    if (!sourceFile) return false;
+    if (!sourceFile)
+        return false;
     File destFile = SPIFFS.open(destination, FILE_WRITE);
-    if (!destFile) { sourceFile.close(); return false; }
-    
+    if (!destFile) {
+        sourceFile.close();
+        return false;
+    }
+
     uint8_t buffer[4096];
     while (sourceFile.available()) {
         int bytesRead = sourceFile.read(buffer, sizeof(buffer));
-        if (bytesRead > 0) destFile.write(buffer, bytesRead);
+        if (bytesRead > 0)
+            destFile.write(buffer, bytesRead);
     }
     sourceFile.close();
     destFile.close();
     return true;
 }
 
-void listDir(const char* dirname, uint8_t levels) {
+void listDir(const char* dirname, uint8_t levels)
+{
     Serial.printf("Listing directory: %s\n", dirname);
     File root = SPIFFS.open(dirname);
-    if (!root || !root.isDirectory()) return;
+    if (!root || !root.isDirectory())
+        return;
     File file = root.openNextFile();
     while (file) {
         if (file.isDirectory()) {
-            Serial.print("  DIR : "); Serial.println(file.name());
-            if (levels) listDir(file.name(), levels - 1);
+            Serial.print("  DIR : ");
+            Serial.println(file.name());
+            if (levels)
+                listDir(file.name(), levels - 1);
         } else {
-            Serial.print("  FILE: "); Serial.print(file.name());
-            Serial.print("\tSIZE: "); Serial.println(file.size());
+            Serial.print("  FILE: ");
+            Serial.print(file.name());
+            Serial.print("\tSIZE: ");
+            Serial.println(file.size());
         }
         file = root.openNextFile();
     }
 }
 
-bool fileExists(const char* filename) {
+bool fileExists(const char* filename)
+{
     File file = SPIFFS.open(filename, FILE_READ);
-    if (file) { file.close(); return true; }
+    if (file) {
+        file.close();
+        return true;
+    }
     return false;
 }
 
-void displayErrorScreen(const char* title, const char* message) {
+void displayErrorScreen(const char* title, const char* message)
+{
     display.fillScreen(GxEPD_WHITE);
     display.setFont(&TimesNRCyr12pt8b);
     display.setTextColor(GxEPD_RED);
-    int16_t x1, y1; uint16_t w, h;
+    int16_t x1, y1;
+    uint16_t w, h;
     display.getTextBounds(title, 0, 0, &x1, &y1, &w, &h);
     display.setCursor((display.width() - w) / 2, display.height() / 3);
     display.print(title);
