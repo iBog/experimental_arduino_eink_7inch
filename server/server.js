@@ -11,16 +11,51 @@ app.use(express.text({ type: 'text/html', limit: '1mb' }));
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 
+// Default configuration
+const DEFAULT_CONFIG = {
+  mode: 'demo',
+  url: null,
+  removeClasses: [],
+  dismissCookies: false,
+  format: 'bmp',
+  viewport: { width: 800, height: 480, layoutWidth: 800 },
+  crop: { x: 0, y: 0, width: 800, height: 480 }
+};
+
 // Helper to load config
 function loadConfig() {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
-      return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      const saved = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      // Merge with defaults to ensure all fields exist
+      return { ...DEFAULT_CONFIG, ...saved };
     }
   } catch (e) {
     console.error("Error loading config:", e);
   }
-  return {};
+  return { ...DEFAULT_CONFIG };
+}
+
+// Initialize config file if it doesn't exist
+function initConfig() {
+  if (!fs.existsSync(CONFIG_PATH)) {
+    console.log('Creating default config.json');
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2));
+  }
+}
+
+initConfig();
+
+// Helper to remove elements by class names
+async function removeElementsByClasses(page, classNames) {
+    if (!classNames || classNames.length === 0) return;
+    console.log('Removing elements with classes:', classNames);
+    await page.evaluate((classes) => {
+        classes.forEach(className => {
+            const elements = document.querySelectorAll('.' + className);
+            elements.forEach(el => el.remove());
+        });
+    }, classNames);
 }
 
 // Helper to try accepting cookies
@@ -129,6 +164,8 @@ app.get('/preview', async (req, res) => {
   const height = parseInt(req.query.height) || 600;
   const layoutWidth = parseInt(req.query.layoutWidth) || width; // Optional layout width
   const dismissCookies = req.query.dismissCookies === 'true';
+  const removeClassesParam = req.query.removeClasses;
+  const removeClasses = removeClassesParam ? removeClassesParam.split(',').map(s => s.trim()).filter(Boolean) : [];
 
   if (!url && mode !== 'weather' && mode !== 'demo') return res.status(400).send('Missing url parameter');
 
@@ -196,11 +233,22 @@ app.get('/preview', async (req, res) => {
         await page.setContent(demoHtml, { waitUntil: 'networkidle0', timeout: 30000 });
     } else {
         console.log(`Previewing: ${url} at ${layoutWidth}x${Math.round(height/deviceScaleFactor)} (Output: ${width}x${height}, Scale: ${deviceScaleFactor})`);
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        try {
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+        } catch (navError) {
+            // If networkidle2 times out, try with just domcontentloaded
+            console.warn('Navigation timeout, retrying with domcontentloaded:', navError.message);
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        }
         
         // Try to dismiss cookies if requested
         if (dismissCookies) {
             await tryToDismissCookies(page);
+        }
+        
+        // Remove elements by class names
+        if (removeClasses.length > 0) {
+            await removeElementsByClasses(page, removeClasses);
         }
     }
 
@@ -245,6 +293,7 @@ app.post('/render', async (req, res) => {
   const height = parseInt(req.query.height) || (useConfig ? config.viewport?.height : 480) || 480;
   const layoutWidth = parseInt(req.query.layoutWidth) || (useConfig ? config.viewport?.layoutWidth : width) || width;
   const dismissCookies = (req.query.dismissCookies === 'true') || (useConfig ? !!config.dismissCookies : false);
+  const removeClasses = useConfig ? (config.removeClasses || []) : [];
 
   // Determine format from query or config
   const formatRaw = req.query.format || (useConfig ? config.format : null) || 'bmp';
@@ -340,6 +389,11 @@ app.post('/render', async (req, res) => {
       if (dismissCookies) {
           await tryToDismissCookies(page);
       }
+      
+      // Remove elements by class names
+      if (removeClasses.length > 0) {
+          await removeElementsByClasses(page, removeClasses);
+      }
     } else if (html) {
       console.log(`Рендер HTML из тела запроса`);
       await page.setContent(html, { waitUntil: 'networkidle0', timeout: 60000 });
@@ -377,18 +431,28 @@ app.post('/render', async (req, res) => {
     await page.screenshot(screenshotOptions);
     await browser.close();
 
+    // Always resize to exactly 800x480
+    const OUTPUT_WIDTH = 800;
+    const OUTPUT_HEIGHT = 480;
+    const resizedPath = path.join(__dirname, `${baseName}_resized.png`);
+    console.log(`Resizing cropped image to ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}`);
+    await sharp(pngPath)
+      .resize(OUTPUT_WIDTH, OUTPUT_HEIGHT, { fit: 'fill' })
+      .toFile(resizedPath);
+    fs.unlinkSync(pngPath);
+    
     if (format === 'bmp') {
-      const image = await Jimp.read(pngPath);
+      const image = await Jimp.read(resizedPath);
       // Write BMP as-is, let ESP32 handle orientation
       await image.writeAsync(outPath);
-      fs.unlinkSync(pngPath);
+      fs.unlinkSync(resizedPath);
     } else if (format === 'bwr') {
       // Process for GxEPD2 3-color (Black/White/Red) binary format
       // Output: [BlackPlane][RedPlane]
       // Packing: 1 bit per pixel, 8 pixels per byte, MSB first.
       // Logic: 0 = Active (Black or Red), 1 = Inactive (White or No Red)
       
-      const { data, info } = await sharp(pngPath)
+      const { data, info } = await sharp(resizedPath)
         .ensureAlpha()
         .raw()
         .toBuffer({ resolveWithObject: true });
@@ -440,7 +504,7 @@ app.post('/render', async (req, res) => {
       }
       
       fs.writeFileSync(outPath, Buffer.concat([bwBuffer, redBuffer]));
-      fs.unlinkSync(pngPath);
+      fs.unlinkSync(resizedPath);
 
     } else if (format === 'png') {
       // Process PNG with sharp
@@ -460,13 +524,13 @@ app.post('/render', async (req, res) => {
       }
       
       const tempPath = path.join(__dirname, `${baseName}_temp.png`);
-      await sharp(pngPath)
+      await sharp(resizedPath)
         .toFormat('png', options)
         .toFile(tempPath);
-      fs.unlinkSync(pngPath);
+      fs.unlinkSync(resizedPath);
       fs.renameSync(tempPath, outPath);
     } else {
-      fs.renameSync(pngPath, outPath);
+      fs.renameSync(resizedPath, outPath);
     }
 
     res.sendFile(outPath, () => {

@@ -74,10 +74,14 @@
             <label>URL:</label>
             <input type="text" id="url" placeholder="http://example.com">
         </div>
+        <div class="row" id="remove-classes-row">
+            <label>Remove Classes:</label>
+            <input type="text" id="remove-classes" placeholder="ads, banner, info">
+        </div>
         <div class="row">
             <label>Viewport:</label>
             <input type="number" id="vp-w" value="800" style="width: 60px"> x 
-            <input type="number" id="vp-h" value="600" style="width: 60px">
+            <input type="number" id="vp-h" value="480" style="width: 60px">
             <label style="margin-left: 10px;">Layout Width:</label>
             <input type="number" id="layout-w" value="800" style="width: 60px" placeholder="Defaults to Viewport Width">
             <button id="btn-preview">Load Preview</button>
@@ -87,11 +91,11 @@
             <label for="dismiss-cookies">Dismiss Cookie Banners (Try Auto-Accept)</label>
         </div>
         <div class="row">
-            <label>Crop:</label>
-            <input type="number" id="crop-x" style="width: 50px">
-            <input type="number" id="crop-y" style="width: 50px">
-            <input type="number" id="crop-w" style="width: 50px">
-            <input type="number" id="crop-h" style="width: 50px">
+            <label>Crop (800:480 aspect):</label>
+            <input type="number" id="crop-x" style="width: 50px" title="X">
+            <input type="number" id="crop-y" style="width: 50px" title="Y">
+            <input type="number" id="crop-w" style="width: 50px; background: #eee;" readonly title="Width (locked)">
+            <input type="number" id="crop-h" style="width: 50px; background: #eee;" readonly title="Height (locked)">
         </div>
         <div class="row">
             <label>Format:</label>
@@ -117,6 +121,8 @@
             modeSelect: document.getElementById('mode-select'),
             urlRow: document.getElementById('url-row'),
             url: document.getElementById('url'),
+            removeClassesRow: document.getElementById('remove-classes-row'),
+            removeClasses: document.getElementById('remove-classes'),
             vpW: document.getElementById('vp-w'),
             vpH: document.getElementById('vp-h'),
             layoutW: document.getElementById('layout-w'),
@@ -133,6 +139,7 @@
             status: document.getElementById('status')
         };
 
+        const CROP_ASPECT = 800 / 480; // Fixed aspect ratio 1.6667
         let currentConfig = {};
         let isDragging = false;
         let isResizing = false;
@@ -142,6 +149,7 @@
         function toggleMode() {
             const isUrl = els.modeSelect.value === 'url';
             els.urlRow.style.display = isUrl ? 'flex' : 'none';
+            els.removeClassesRow.style.display = isUrl ? 'flex' : 'none';
         }
 
         // Load config on start
@@ -161,8 +169,9 @@
                 toggleMode();
 
                 els.url.value = currentConfig.url || '';
+                els.removeClasses.value = (currentConfig.removeClasses || []).join(', ');
                 els.vpW.value = currentConfig.viewport?.width || 800;
-                els.vpH.value = currentConfig.viewport?.height || 600;
+                els.vpH.value = currentConfig.viewport?.height || 480;
                 els.layoutW.value = currentConfig.viewport?.layoutWidth || currentConfig.viewport?.width || 800;
                 els.dismissCookies.checked = !!currentConfig.dismissCookies;
                 
@@ -224,13 +233,15 @@
                 const lw = els.layoutW.value;
                 const dc = els.dismissCookies.checked;
                 
+                const rc = els.removeClasses.value.trim();
                 let query = `width=${w}&height=${h}&layoutWidth=${lw}&dismissCookies=${dc}`;
                 if (mode === 'weather') {
-                    query += '&mode=weather&url=internal'; // url param needed to pass check in preview endpoint?
+                    query += '&mode=weather&url=internal';
                 } else if (mode === 'demo') {
                     query += '&mode=demo&url=internal';
                 } else {
                     query += `&url=${encodeURIComponent(url)}`;
+                    if (rc) query += `&removeClasses=${encodeURIComponent(rc)}`;
                 }
 
                 // Request preview image
@@ -256,9 +267,12 @@
 
         async function saveConfig() {
             const mode = els.modeSelect.value;
+            const rcVal = els.removeClasses.value.trim();
+            const rcArray = rcVal ? rcVal.split(',').map(s => s.trim()).filter(Boolean) : [];
             const config = {
                 mode: (mode === 'weather' || mode === 'demo') ? mode : null,
                 url: mode === 'url' ? els.url.value : null,
+                removeClasses: mode === 'url' ? rcArray : [],
                 dismissCookies: els.dismissCookies.checked,
                 format: 'bmp',
                 viewport: {
@@ -334,17 +348,29 @@
 
                 updateCropInputs(newX, newY, currentW, currentH);
             } else if (isResizing) {
-                let newW = startValW + dx;
-                let newH = startValH + dy;
                 const currentX = startValX;
                 const currentY = startValY;
-
+                
+                // Calculate new width based on drag, maintain aspect ratio
+                let newW = startValW + dx;
+                newW = Math.max(80, newW); // Minimum 80px width
+                let newH = Math.round(newW / CROP_ASPECT);
+                
                 // Constrain within image bounds
-                const maxW = Math.max(10, imgW - currentX);
-                const maxH = Math.max(10, imgH - currentY);
-
-                newW = Math.max(10, Math.min(newW, maxW));
-                newH = Math.max(10, Math.min(newH, maxH));
+                const maxW = imgW - currentX;
+                const maxH = imgH - currentY;
+                
+                // If width exceeds bounds, constrain it
+                if (newW > maxW) {
+                    newW = maxW;
+                    newH = Math.round(newW / CROP_ASPECT);
+                }
+                
+                // If height exceeds bounds, constrain by height instead
+                if (newH > maxH) {
+                    newH = maxH;
+                    newW = Math.round(newH * CROP_ASPECT);
+                }
 
                 updateCropInputs(currentX, currentY, newW, newH);
             }
@@ -402,7 +428,8 @@
         els.btnPreview.addEventListener('click', loadPreview);
         els.btnSave.addEventListener('click', saveConfig);
         
-        [els.cropX, els.cropY, els.cropW, els.cropH].forEach(el => {
+        // Only X and Y are editable, W and H are locked to aspect ratio
+        [els.cropX, els.cropY].forEach(el => {
             el.addEventListener('input', updateCropBoxVisuals);
         });
 
