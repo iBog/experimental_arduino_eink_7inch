@@ -16,11 +16,16 @@ const DEFAULT_CONFIG = {
   mode: 'demo',
   url: null,
   removeClasses: [],
+  mobileMode: false,
   dismissCookies: false,
   format: 'bmp',
   viewport: { width: 800, height: 480, layoutWidth: 800 },
   crop: { x: 0, y: 0, width: 800, height: 480 }
 };
+
+// User agents
+const DESKTOP_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36';
+const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1';
 
 // Helper to load config
 function loadConfig() {
@@ -166,6 +171,7 @@ app.get('/preview', async (req, res) => {
   const dismissCookies = req.query.dismissCookies === 'true';
   const removeClassesParam = req.query.removeClasses;
   const removeClasses = removeClassesParam ? removeClassesParam.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const mobileMode = req.query.mobileMode === 'true';
 
   if (!url && mode !== 'weather' && mode !== 'demo') return res.status(400).send('Missing url parameter');
 
@@ -186,7 +192,7 @@ app.get('/preview', async (req, res) => {
         deviceScaleFactor: deviceScaleFactor
     });
     
-    await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36');
+    await page.setUserAgent(mobileMode ? MOBILE_UA : DESKTOP_UA);
     
     if (mode === 'weather') {
         console.log(`Previewing weather mode`);
@@ -294,6 +300,7 @@ app.post('/render', async (req, res) => {
   const layoutWidth = parseInt(req.query.layoutWidth) || (useConfig ? config.viewport?.layoutWidth : width) || width;
   const dismissCookies = (req.query.dismissCookies === 'true') || (useConfig ? !!config.dismissCookies : false);
   const removeClasses = useConfig ? (config.removeClasses || []) : [];
+  const mobileMode = useConfig ? !!config.mobileMode : false;
 
   // Determine format from query or config
   const formatRaw = req.query.format || (useConfig ? config.format : null) || 'bmp';
@@ -332,9 +339,7 @@ app.post('/render', async (req, res) => {
         deviceScaleFactor: deviceScaleFactor 
     });
 
-    await page.setUserAgent(
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36'
-    );
+    await page.setUserAgent(mobileMode ? MOBILE_UA : DESKTOP_UA);
 
     let contentHtml = null;
 

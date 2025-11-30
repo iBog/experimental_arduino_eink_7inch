@@ -78,6 +78,10 @@
             <label>Remove Classes:</label>
             <input type="text" id="remove-classes" placeholder="ads, banner, info">
         </div>
+        <div class="row" id="mobile-row">
+            <input type="checkbox" id="mobile-mode">
+            <label for="mobile-mode">Load Mobile Version</label>
+        </div>
         <div class="row">
             <label>Viewport:</label>
             <input type="number" id="vp-w" value="800" style="width: 60px"> x 
@@ -123,6 +127,8 @@
             url: document.getElementById('url'),
             removeClassesRow: document.getElementById('remove-classes-row'),
             removeClasses: document.getElementById('remove-classes'),
+            mobileRow: document.getElementById('mobile-row'),
+            mobileMode: document.getElementById('mobile-mode'),
             vpW: document.getElementById('vp-w'),
             vpH: document.getElementById('vp-h'),
             layoutW: document.getElementById('layout-w'),
@@ -150,6 +156,7 @@
             const isUrl = els.modeSelect.value === 'url';
             els.urlRow.style.display = isUrl ? 'flex' : 'none';
             els.removeClassesRow.style.display = isUrl ? 'flex' : 'none';
+            els.mobileRow.style.display = isUrl ? 'flex' : 'none';
         }
 
         // Load config on start
@@ -170,6 +177,7 @@
 
                 els.url.value = currentConfig.url || '';
                 els.removeClasses.value = (currentConfig.removeClasses || []).join(', ');
+                els.mobileMode.checked = !!currentConfig.mobileMode;
                 els.vpW.value = currentConfig.viewport?.width || 800;
                 els.vpH.value = currentConfig.viewport?.height || 480;
                 els.layoutW.value = currentConfig.viewport?.layoutWidth || currentConfig.viewport?.width || 800;
@@ -242,6 +250,7 @@
                 } else {
                     query += `&url=${encodeURIComponent(url)}`;
                     if (rc) query += `&removeClasses=${encodeURIComponent(rc)}`;
+                    if (els.mobileMode.checked) query += `&mobileMode=true`;
                 }
 
                 // Request preview image
@@ -273,6 +282,7 @@
                 mode: (mode === 'weather' || mode === 'demo') ? mode : null,
                 url: mode === 'url' ? els.url.value : null,
                 removeClasses: mode === 'url' ? rcArray : [],
+                mobileMode: mode === 'url' ? els.mobileMode.checked : false,
                 dismissCookies: els.dismissCookies.checked,
                 format: 'bmp',
                 viewport: {
