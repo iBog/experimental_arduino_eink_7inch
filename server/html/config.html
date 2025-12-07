@@ -95,6 +95,10 @@
             <label for="dismiss-cookies">Dismiss Cookie Banners (Try Auto-Accept)</label>
         </div>
         <div class="row">
+            <input type="checkbox" id="timestamp-watermark">
+            <label for="timestamp-watermark">Add Timestamp Watermark (GMT+3)</label>
+        </div>
+        <div class="row">
             <label>Crop (800:480 aspect):</label>
             <input type="number" id="crop-x" style="width: 50px" title="X">
             <input type="number" id="crop-y" style="width: 50px" title="Y">
@@ -133,6 +137,7 @@
             vpH: document.getElementById('vp-h'),
             layoutW: document.getElementById('layout-w'),
             dismissCookies: document.getElementById('dismiss-cookies'),
+            timestampWatermark: document.getElementById('timestamp-watermark'),
             cropX: document.getElementById('crop-x'),
             cropY: document.getElementById('crop-y'),
             cropW: document.getElementById('crop-w'),
@@ -182,6 +187,7 @@
                 els.vpH.value = currentConfig.viewport?.height || 480;
                 els.layoutW.value = currentConfig.viewport?.layoutWidth || currentConfig.viewport?.width || 800;
                 els.dismissCookies.checked = !!currentConfig.dismissCookies;
+                els.timestampWatermark.checked = !!currentConfig.timestampWatermark;
                 
                 updateCropInputs(
                     currentConfig.crop?.x || 0,
@@ -240,9 +246,10 @@
                 const h = els.vpH.value;
                 const lw = els.layoutW.value;
                 const dc = els.dismissCookies.checked;
+                const tw = els.timestampWatermark.checked;
                 
                 const rc = els.removeClasses.value.trim();
-                let query = `width=${w}&height=${h}&layoutWidth=${lw}&dismissCookies=${dc}`;
+                let query = `width=${w}&height=${h}&layoutWidth=${lw}&dismissCookies=${dc}&timestampWatermark=${tw}`;
                 if (mode === 'weather') {
                     query += '&mode=weather&url=internal';
                 } else if (mode === 'demo') {
@@ -284,6 +291,7 @@
                 removeClasses: mode === 'url' ? rcArray : [],
                 mobileMode: mode === 'url' ? els.mobileMode.checked : false,
                 dismissCookies: els.dismissCookies.checked,
+                timestampWatermark: els.timestampWatermark.checked,
                 format: 'bmp',
                 viewport: {
                     width: parseInt(els.vpW.value),
@@ -409,41 +417,3 @@
         window.addEventListener('mouseup', handleEnd);
 
         // Touch events
-        els.cropBox.addEventListener('touchstart', (e) => {
-            const touch = e.touches[0];
-            if (e.target.classList.contains('handle')) {
-                e.preventDefault();
-                handleStart(touch.clientX, touch.clientY, 'resize');
-            } else {
-                e.preventDefault();
-                handleStart(touch.clientX, touch.clientY, 'move');
-            }
-        }, {passive: false});
-
-        window.addEventListener('touchmove', (e) => {
-            if (isDragging || isResizing) {
-                e.preventDefault();
-                const touch = e.touches[0];
-                handleMove(touch.clientX, touch.clientY);
-            }
-        }, {passive: false});
-
-        window.addEventListener('touchend', handleEnd);
-        
-        // Update visuals on window resize (image might scale)
-        window.addEventListener('resize', updateCropBoxVisuals);
-
-        // UI Events
-        els.modeSelect.addEventListener('change', toggleMode);
-        els.btnPreview.addEventListener('click', loadPreview);
-        els.btnSave.addEventListener('click', saveConfig);
-        
-        // Only X and Y are editable, W and H are locked to aspect ratio
-        [els.cropX, els.cropY].forEach(el => {
-            el.addEventListener('input', updateCropBoxVisuals);
-        });
-
-        loadConfig();
-    </script>
-</body>
-</html>

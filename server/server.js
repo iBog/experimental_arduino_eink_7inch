@@ -18,6 +18,7 @@ const DEFAULT_CONFIG = {
   removeClasses: [],
   mobileMode: false,
   dismissCookies: false,
+  timestampWatermark: false,
   format: 'bmp',
   viewport: { width: 800, height: 480, layoutWidth: 800 },
   crop: { x: 0, y: 0, width: 800, height: 480 }
@@ -137,6 +138,62 @@ async function tryToDismissCookies(page) {
     }
 }
 
+// Helper to add timestamp watermark
+async function addTimestampWatermark(imagePath, timezoneOffset = 3) {
+    try {
+        console.log(`Adding timestamp watermark with GMT+${timezoneOffset} offset`);
+        
+        // Load the image
+        const image = await Jimp.read(imagePath);
+        
+        // Get current time in UTC
+        const now = new Date();
+        // Apply timezone offset (GMT+3 means add 3 hours to UTC)
+        const offsetMillis = timezoneOffset * 60 * 60 * 1000;
+        const localTime = new Date(now.getTime() + offsetMillis);
+        
+        // Format date and time
+        const dateStr = localTime.toISOString().split('T')[0]; // YYYY-MM-DD
+        const timeStr = localTime.toISOString().split('T')[1].split('.')[0]; // HH:MM:SS
+        
+        const timestamp = `${dateStr} ${timeStr} GMT+${timezoneOffset}`;
+        
+        // Load a font (Jimp has built-in fonts)
+        const font = await Jimp.loadFont(Jimp.FONT_SANS_10_BLACK);
+        
+        // Calculate position (left bottom corner)
+        const textWidth = Jimp.measureText(font, timestamp);
+        const textHeight = Jimp.measureTextHeight(font, timestamp);
+        const margin = 5;
+        const x = margin;
+        const y = image.bitmap.height - textHeight - margin;
+        
+        // Draw semi-transparent background for better readability
+        const bgColor = 0xFFFFFFFF; // White
+        const bgOpacity = 0.7; // 70% opaque
+        image.scan(x - 2, y - 1, textWidth + 4, textHeight + 2, function(x, y, idx) {
+            const currentR = this.bitmap.data[idx];
+            const currentG = this.bitmap.data[idx + 1];
+            const currentB = this.bitmap.data[idx + 2];
+            
+            // Blend white background with current pixel
+            this.bitmap.data[idx] = Math.round(bgColor * bgOpacity + currentR * (1 - bgOpacity));
+            this.bitmap.data[idx + 1] = Math.round(bgColor * bgOpacity + currentG * (1 - bgOpacity));
+            this.bitmap.data[idx + 2] = Math.round(bgColor * bgOpacity + currentB * (1 - bgOpacity));
+        });
+        
+        // Draw timestamp text
+        image.print(font, x, y, timestamp);
+        
+        // Save the image
+        await image.writeAsync(imagePath);
+        console.log('Timestamp watermark added:', timestamp);
+    } catch (error) {
+        console.error('Error adding timestamp watermark:', error);
+        // Don't fail the whole process if watermark fails
+    }
+}
+
 // Config endpoints
 app.get('/config', (req, res) => {
   res.json(loadConfig());
@@ -169,6 +226,7 @@ app.get('/preview', async (req, res) => {
   const height = parseInt(req.query.height) || 600;
   const layoutWidth = parseInt(req.query.layoutWidth) || width; // Optional layout width
   const dismissCookies = req.query.dismissCookies === 'true';
+  const timestampWatermark = req.query.timestampWatermark === 'true';
   const removeClassesParam = req.query.removeClasses;
   const removeClasses = removeClassesParam ? removeClassesParam.split(',').map(s => s.trim()).filter(Boolean) : [];
   const mobileMode = req.query.mobileMode === 'true';
@@ -264,6 +322,30 @@ app.get('/preview', async (req, res) => {
     const screenshotBuffer = await page.screenshot();
     await browser.close();
 
+    // Add timestamp watermark if enabled
+    if (timestampWatermark) {
+        try {
+            console.log(`Adding timestamp watermark to preview with GMT+3 offset`);
+            // Save buffer to temp file
+            const tempPath = path.join(__dirname, `preview_temp_${Date.now()}.png`);
+            fs.writeFileSync(tempPath, screenshotBuffer);
+            
+            // Add watermark
+            await addTimestampWatermark(tempPath, 3);
+            
+            // Read back the watermarked image
+            const watermarkedBuffer = fs.readFileSync(tempPath);
+            fs.unlinkSync(tempPath);
+            
+            res.set('Content-Type', 'image/png');
+            res.send(watermarkedBuffer);
+            return;
+        } catch (error) {
+            console.error('Error adding watermark to preview:', error);
+            // Fall through to send original screenshot
+        }
+    }
+
     res.set('Content-Type', 'image/png');
     res.send(screenshotBuffer);
   } catch (err) {
@@ -299,6 +381,7 @@ app.post('/render', async (req, res) => {
   const height = parseInt(req.query.height) || (useConfig ? config.viewport?.height : 480) || 480;
   const layoutWidth = parseInt(req.query.layoutWidth) || (useConfig ? config.viewport?.layoutWidth : width) || width;
   const dismissCookies = (req.query.dismissCookies === 'true') || (useConfig ? !!config.dismissCookies : false);
+  const timestampWatermark = (req.query.timestampWatermark === 'true') || (useConfig ? !!config.timestampWatermark : false);
   const removeClasses = useConfig ? (config.removeClasses || []) : [];
   const mobileMode = useConfig ? !!config.mobileMode : false;
 
@@ -445,6 +528,11 @@ app.post('/render', async (req, res) => {
       .resize(OUTPUT_WIDTH, OUTPUT_HEIGHT, { fit: 'fill' })
       .toFile(resizedPath);
     fs.unlinkSync(pngPath);
+    
+    // Add timestamp watermark if enabled
+    if (timestampWatermark) {
+        await addTimestampWatermark(resizedPath, 3); // GMT+3 as specified
+    }
     
     if (format === 'bmp') {
       const image = await Jimp.read(resizedPath);
