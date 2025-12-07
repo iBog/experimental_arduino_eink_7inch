@@ -8,6 +8,7 @@
 #include <PNGdec.h>
 #include <SPIFFS.h>
 #include <WiFi.h>
+#include <time.h>
 
 // Render API configuration
 // const char* renderApiUrl = "http://192.168.2.139:3123/render?format=bmp&width=100&height=100";
@@ -21,6 +22,11 @@ const char* renderApiUrl = "http://192.168.2.139:3123/render?format=bwr";
 // WiFi credentials
 const char* ssid = "bogswifi5";
 const char* password = "bog12345";
+
+// NTP configuration for GMT+3 (Minsk timezone)
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 3 * 3600; // GMT+3
+const int daylightOffset_sec = 0;    // No daylight saving
 
 // Error handling and retry configuration
 const int MAX_RETRY_ATTEMPTS = 3;
@@ -76,6 +82,7 @@ void printBMPInfo(const char* filename);
 void listDir(const char* dirname, uint8_t levels);
 uint16_t read16(File& f);
 uint32_t read32(File& f);
+uint64_t calculateSleepDuration(); // Calculate sleep duration based on current time
 
 // PNGdec Callbacks
 void* pngOpen(const char* filename, int32_t* size)
@@ -157,6 +164,20 @@ void setup()
     rgbPixel.setPixelColor(0, ledColorState); // RGB color
     rgbPixel.show();
     connectWiFi();
+    
+    // Configure NTP and get current time
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    Serial.println("Waiting for NTP time sync...");
+    
+    // Wait for time to be set
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo, 10000)) { // 10 second timeout
+        Serial.println("Failed to obtain time, using default 1 hour sleep");
+    } else {
+        char timeStr[64];
+        strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeinfo);
+        Serial.printf("Current time: %s\n", timeStr);
+    }
 
     // Universal image filename
     const char* imageFilename = "/image.bin";
@@ -222,8 +243,13 @@ void setup()
 
         Serial.println("Display update completed");
     }
-    // Put ESP32 into deep sleep for 1 hours
-    Serial.println("Entering deep sleep for 1 hours...");
+    // Calculate and set deep sleep duration based on current time
+    uint64_t sleepDuration = calculateSleepDuration();
+    uint64_t sleepHours = sleepDuration / (60 * 60 * 1000000ULL);
+    uint64_t sleepMinutes = (sleepDuration % (60 * 60 * 1000000ULL)) / (60 * 1000000ULL);
+    
+    Serial.printf("Entering deep sleep for %llu hours %llu minutes...\n", sleepHours, sleepMinutes);
+    
     // LED PowerOff
     digitalWrite(LED_PIN, LOW);
     // RGB PowerOff
@@ -232,7 +258,8 @@ void setup()
     rgbPixel.setPixelColor(0, ledColorState); // RGB color
     rgbPixel.show();
     display.powerOff();
-    esp_sleep_enable_timer_wakeup(1 * 60 * 60 * 1000000ULL); // 1 hours in microseconds
+    
+    esp_sleep_enable_timer_wakeup(sleepDuration); // Use calculated sleep duration
     esp_deep_sleep_start();
 }
 
@@ -446,6 +473,43 @@ uint32_t read32(File& f)
     ((uint8_t*)&result)[2] = f.read();
     ((uint8_t*)&result)[3] = f.read(); // MSB
     return result;
+}
+
+// Calculate sleep duration based on current time
+// Returns microseconds to sleep
+uint64_t calculateSleepDuration()
+{
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo, 5000)) { // 5 second timeout
+        Serial.println("Failed to get current time for sleep calculation, using 1 hour");
+        return 1 * 60 * 60 * 1000000ULL; // 1 hour in microseconds
+    }
+    
+    int currentHour = timeinfo.tm_hour;
+    int currentMinute = timeinfo.tm_min;
+    int currentSecond = timeinfo.tm_sec;
+    
+    // Calculate total seconds since midnight
+    int currentSecondsSinceMidnight = currentHour * 3600 + currentMinute * 60 + currentSecond;
+    
+    // Target times in seconds since midnight
+    int target1AM = 1 * 3600;  // 01:00
+    int target8AM = 8 * 3600;  // 08:00
+    
+    Serial.printf("Current time: %02d:%02d:%02d\n", currentHour, currentMinute, currentSecond);
+    
+    // Check if current time is between 01:00 and 08:00
+    if (currentSecondsSinceMidnight >= target1AM && currentSecondsSinceMidnight < target8AM) {
+        // Sleep until 08:00
+        int secondsUntil8AM = target8AM - currentSecondsSinceMidnight;
+        Serial.printf("Sleeping until 08:00: %d seconds (%d hours %d minutes)\n", 
+                     secondsUntil8AM, secondsUntil8AM / 3600, (secondsUntil8AM % 3600) / 60);
+        return (uint64_t)secondsUntil8AM * 1000000ULL; // Convert to microseconds
+    } else {
+        // Sleep for 1 hour
+        Serial.println("Sleeping for 1 hour");
+        return 1 * 60 * 60 * 1000000ULL; // 1 hour in microseconds
+    }
 }
 
 // Universal image display function - detects format and calls appropriate handler
