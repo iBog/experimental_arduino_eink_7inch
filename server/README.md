@@ -30,6 +30,17 @@ The API will be available at `http://localhost:3123`
 
 **Configuration UI:** `http://localhost:3123/config.html`
 
+**With authentication:**
+```bash
+# Create .env file or pass directly
+echo "API_TOKEN=your-secret-token" > .env
+docker compose up -d
+```
+
+Then access: `http://localhost:3123/config.html?token=your-secret-token`
+
+API calls require header: `Authorization: Bearer your-secret-token`
+
 ### Installation on Debian 12 (Clean Install)
 
 1. **Update system and install basic tools:**
@@ -230,6 +241,17 @@ docker compose up -d
 API будет доступен по адресу `http://localhost:3123`
 
 **Интерфейс настройки:** `http://localhost:3123/config.html`
+
+**С аутентификацией:**
+```bash
+# Создайте .env файл или передайте напрямую
+echo "API_TOKEN=ваш-секретный-токен" > .env
+docker compose up -d
+```
+
+Доступ: `http://localhost:3123/config.html?token=ваш-секретный-токен`
+
+API запросы требуют заголовок: `Authorization: Bearer ваш-секретный-токен`
 
 ### Установка на Debian 12 (с нуля)
 

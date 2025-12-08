@@ -9,6 +9,32 @@ const app = express();
 app.use(express.json()); // Support JSON-encoded bodies
 app.use(express.text({ type: 'text/html', limit: '1mb' }));
 
+// Optional Bearer token authentication (set API_TOKEN env var to enable)
+const AUTH_TOKEN = process.env.API_TOKEN || null;
+
+function authMiddleware(req, res, next) {
+  if (!AUTH_TOKEN) return next();
+  if (req.path === '/health') return next();
+  
+  const authHeader = req.headers.authorization;
+  const queryToken = req.query.token;
+  
+  let token = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7);
+  } else if (queryToken) {
+    token = queryToken;
+  }
+  
+  if (!token || token !== AUTH_TOKEN) {
+    return res.status(401).send('Unauthorized. Add ?token=YOUR_TOKEN to URL or Authorization header.');
+  }
+  
+  next();
+}
+
+app.use(authMiddleware);
+
 // Use data directory for persistent config (works with Docker volumes)
 const DATA_DIR = path.join(__dirname, 'data');
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');

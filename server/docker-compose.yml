@@ -10,6 +10,7 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
+      - API_TOKEN=${API_TOKEN:-}
     volumes:
       - html2png-data:/app/data
     healthcheck:
