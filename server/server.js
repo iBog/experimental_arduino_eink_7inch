@@ -9,7 +9,9 @@ const app = express();
 app.use(express.json()); // Support JSON-encoded bodies
 app.use(express.text({ type: 'text/html', limit: '1mb' }));
 
-const CONFIG_PATH = path.join(__dirname, 'config.json');
+// Use data directory for persistent config (works with Docker volumes)
+const DATA_DIR = path.join(__dirname, 'data');
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 // Default configuration
 const DEFAULT_CONFIG = {
@@ -22,7 +24,7 @@ const DEFAULT_CONFIG = {
   format: 'bmp',
   resizeAlgorithm: 'lanczos3',
   sharpen: 0,
-  bwrDither: false,
+  dither: false,
   viewport: { width: 800, height: 480, layoutWidth: 800 },
   crop: { x: 0, y: 0, width: 800, height: 480 }
 };
@@ -45,8 +47,12 @@ function loadConfig() {
   return { ...DEFAULT_CONFIG };
 }
 
-// Initialize config file if it doesn't exist
+// Initialize data directory and config file
 function initConfig() {
+  if (!fs.existsSync(DATA_DIR)) {
+    console.log('Creating data directory');
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
   if (!fs.existsSync(CONFIG_PATH)) {
     console.log('Creating default config.json');
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2));
@@ -329,15 +335,60 @@ app.get('/preview', async (req, res) => {
     // Wait a bit for dynamic content
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    const screenshotBuffer = await page.screenshot();
+    let screenshotBuffer = await page.screenshot();
     await browser.close();
+
+    const tempPath = path.join(__dirname, `preview_temp_${Date.now()}.png`);
+    const ditherEnabled = req.query.dither === 'true';
+    
+    // Apply dithering if enabled (preview how e-ink will look)
+    if (ditherEnabled) {
+        try {
+            console.log('Applying Floyd-Steinberg dithering to preview');
+            const { data, info } = await sharp(screenshotBuffer)
+                .greyscale()
+                .raw()
+                .toBuffer({ resolveWithObject: true });
+            
+            const w = info.width;
+            const h = info.height;
+            const pixels = new Float32Array(w * h);
+            for (let i = 0; i < w * h; i++) {
+                pixels[i] = data[i];
+            }
+            
+            // Floyd-Steinberg dithering to B/W
+            const output = Buffer.alloc(w * h);
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    const idx = y * w + x;
+                    const oldPixel = Math.max(0, Math.min(255, pixels[idx]));
+                    const newPixel = oldPixel < 128 ? 0 : 255;
+                    output[idx] = newPixel;
+                    const error = oldPixel - newPixel;
+                    
+                    if (x + 1 < w) pixels[idx + 1] += error * 7 / 16;
+                    if (y + 1 < h) {
+                        if (x > 0) pixels[idx + w - 1] += error * 3 / 16;
+                        pixels[idx + w] += error * 5 / 16;
+                        if (x + 1 < w) pixels[idx + w + 1] += error * 1 / 16;
+                    }
+                }
+            }
+            
+            // Convert back to PNG
+            screenshotBuffer = await sharp(output, { raw: { width: w, height: h, channels: 1 } })
+                .png()
+                .toBuffer();
+        } catch (error) {
+            console.error('Error applying dithering to preview:', error);
+        }
+    }
 
     // Add timestamp watermark if enabled
     if (timestampWatermark) {
         try {
             console.log(`Adding timestamp watermark to preview with GMT+3 offset`);
-            // Save buffer to temp file
-            const tempPath = path.join(__dirname, `preview_temp_${Date.now()}.png`);
             fs.writeFileSync(tempPath, screenshotBuffer);
             
             // Get crop bounds from query params for correct watermark positioning
@@ -570,18 +621,65 @@ app.post('/render', async (req, res) => {
     }
     
     if (format === 'bmp') {
-      const image = await Jimp.read(resizedPath);
-      // Write BMP as-is, let ESP32 handle orientation
-      await image.writeAsync(outPath);
-      fs.unlinkSync(resizedPath);
+      const dither = (req.query.dither === 'true') || (useConfig ? !!config.dither : false);
+      
+      if (dither) {
+        // Apply Floyd-Steinberg dithering to black/white
+        console.log('BMP conversion with Floyd-Steinberg dithering');
+        const { data, info } = await sharp(resizedPath)
+          .greyscale()
+          .raw()
+          .toBuffer({ resolveWithObject: true });
+        
+        const w = info.width;
+        const h = info.height;
+        const pixels = new Float32Array(w * h);
+        for (let i = 0; i < w * h; i++) {
+          pixels[i] = data[i];
+        }
+        
+        // Floyd-Steinberg dithering to B/W
+        const output = Buffer.alloc(w * h);
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const idx = y * w + x;
+            const oldPixel = Math.max(0, Math.min(255, pixels[idx]));
+            const newPixel = oldPixel < 128 ? 0 : 255;
+            output[idx] = newPixel;
+            const error = oldPixel - newPixel;
+            
+            if (x + 1 < w) pixels[idx + 1] += error * 7 / 16;
+            if (y + 1 < h) {
+              if (x > 0) pixels[idx + w - 1] += error * 3 / 16;
+              pixels[idx + w] += error * 5 / 16;
+              if (x + 1 < w) pixels[idx + w + 1] += error * 1 / 16;
+            }
+          }
+        }
+        
+        // Convert to BMP using Jimp
+        const image = new Jimp(w, h);
+        for (let i = 0; i < w * h; i++) {
+          const v = output[i];
+          const x = i % w;
+          const y = Math.floor(i / w);
+          image.setPixelColor(Jimp.rgbaToInt(v, v, v, 255), x, y);
+        }
+        await image.writeAsync(outPath);
+        fs.unlinkSync(resizedPath);
+      } else {
+        const image = await Jimp.read(resizedPath);
+        await image.writeAsync(outPath);
+        fs.unlinkSync(resizedPath);
+      }
     } else if (format === 'bwr') {
       // Process for GxEPD2 3-color (Black/White/Red) binary format
       // Output: [BlackPlane][RedPlane]
       // Packing: 1 bit per pixel, 8 pixels per byte, MSB first.
       // Logic: 0 = Active (Black or Red), 1 = Inactive (White or No Red)
       
-      const bwrDither = (req.query.bwrDither === 'true') || (useConfig ? !!config.bwrDither : false);
-      console.log(`BWR conversion with dithering: ${bwrDither}`);
+      const dither = (req.query.dither === 'true') || (useConfig ? !!config.dither : false);
+      console.log(`BWR conversion with dithering: ${dither}`);
       
       const { data, info } = await sharp(resizedPath)
         .ensureAlpha()
@@ -653,7 +751,7 @@ app.post('/render', async (req, res) => {
           }
           
           // Apply Floyd-Steinberg dithering if enabled
-          if (bwrDither) {
+          if (dither) {
             const errR = r - chosenR;
             const errG = g - chosenG;
             const errB = b - chosenB;

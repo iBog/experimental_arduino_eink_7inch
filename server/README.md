@@ -156,7 +156,7 @@ To ensure the API starts automatically on boot and restarts on failure, set up a
    - `colors` (optional): For `format=png`. Number of colors (2-256) for quantization.
    - `resizeAlgorithm` (optional): Interpolation method: `nearest`, `cubic`, `mitchell`, `lanczos2`, `lanczos3` (default).
    - `sharpen` (optional): Sharpening amount (0-2). Helps text clarity on e-ink.
-   - `bwrDither` (optional): `true` to enable Floyd-Steinberg dithering for BWR format.
+   - `dither` (optional): `true` to enable Floyd-Steinberg dithering (works for BMP, BWR, PNG).
 
    **Body:**
    - Raw HTML string (Content-Type: `text/html`). Used only if `url` and `mode` are not provided.
@@ -195,7 +195,7 @@ To ensure the API starts automatically on boot and restarts on failure, set up a
 
    *Render to BWR format for 3-color e-ink with sharpening and dithering:*
    ```bash
-   curl -X POST "http://localhost:3123/render?url=https://example.com&format=bwr&sharpen=1&bwrDither=true" --output display.bwr
+   curl -X POST "http://localhost:3123/render?url=https://example.com&format=bwr&sharpen=1&dither=true" --output display.bwr
    ```
 
    *Render using saved config (no parameters needed):*
@@ -357,7 +357,7 @@ API будет доступен по адресу `http://localhost:3123`
    - `colors` (необязательно): Для `format=png`. Количество цветов (2-256) для квантования.
    - `resizeAlgorithm` (необязательно): Метод интерполяции: `nearest`, `cubic`, `mitchell`, `lanczos2`, `lanczos3` (по умолчанию).
    - `sharpen` (необязательно): Уровень резкости (0-2). Улучшает читаемость текста на e-ink.
-   - `bwrDither` (необязательно): `true` для включения дизеринга Floyd-Steinberg для BWR формата.
+   - `dither` (необязательно): `true` для включения дизеринга Floyd-Steinberg (работает для BMP, BWR, PNG).
 
    **Тело запроса (Body):**
    - Строка HTML (Content-Type: `text/html`). Используется только если `url` и `mode` не указаны.
@@ -396,7 +396,7 @@ API будет доступен по адресу `http://localhost:3123`
 
    *Рендер в BWR формат для 3-цветного e-ink с резкостью и дизерингом:*
    ```bash
-   curl -X POST "http://localhost:3123/render?url=https://example.com&format=bwr&sharpen=1&bwrDither=true" --output display.bwr
+   curl -X POST "http://localhost:3123/render?url=https://example.com&format=bwr&sharpen=1&dither=true" --output display.bwr
    ```
 
    *Рендер с использованием сохранённой конфигурации (параметры не нужны):*

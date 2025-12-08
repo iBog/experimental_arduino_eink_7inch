@@ -127,15 +127,8 @@
             <span style="color: #666; font-size: 12px;">Improves text clarity</span>
         </div>
         <div class="row">
-            <input type="checkbox" id="bwr-dither">
-            <label for="bwr-dither">BWR Dithering (Floyd-Steinberg) - better gradients on e-ink</label>
-        </div>
-        <div class="row">
-            <label>Format:</label>
-            <span>BMP (Fixed)</span>
-        </div>
-        <div class="row">
-            <button id="btn-save" style="background: #28a745;">Save Configuration</button>
+            <input type="checkbox" id="dither">
+            <label for="dither">Dithering (Floyd-Steinberg) - simulates gradients on e-ink</label>
         </div>
     </div>
 
@@ -175,7 +168,7 @@
             status: document.getElementById('status'),
             resizeAlgorithm: document.getElementById('resize-algorithm'),
             sharpen: document.getElementById('sharpen'),
-            bwrDither: document.getElementById('bwr-dither')
+            dither: document.getElementById('dither')
         };
 
         const CROP_ASPECT = 800 / 480; // Fixed aspect ratio 1.6667
@@ -218,7 +211,7 @@
                 els.timestampWatermark.checked = !!currentConfig.timestampWatermark;
                 els.resizeAlgorithm.value = currentConfig.resizeAlgorithm || 'lanczos3';
                 els.sharpen.value = currentConfig.sharpen || '0';
-                els.bwrDither.checked = !!currentConfig.bwrDither;
+                els.dither.checked = !!currentConfig.dither;
                 
                 updateCropInputs(
                     currentConfig.crop?.x || 0,
@@ -278,6 +271,7 @@
                 const lw = els.layoutW.value;
                 const dc = els.dismissCookies.checked;
                 const tw = els.timestampWatermark.checked;
+                const dither = els.dither.checked;
                 
                 const rc = els.removeClasses.value.trim();
                 const cropX = els.cropX.value;
@@ -285,7 +279,7 @@
                 const cropW = els.cropW.value;
                 const cropH = els.cropH.value;
                 
-                let query = `width=${w}&height=${h}&layoutWidth=${lw}&dismissCookies=${dc}&timestampWatermark=${tw}&cropX=${cropX}&cropY=${cropY}&cropW=${cropW}&cropH=${cropH}`;
+                let query = `width=${w}&height=${h}&layoutWidth=${lw}&dismissCookies=${dc}&timestampWatermark=${tw}&dither=${dither}&cropX=${cropX}&cropY=${cropY}&cropW=${cropW}&cropH=${cropH}`;
                 if (mode === 'weather') {
                     query += '&mode=weather&url=internal';
                 } else if (mode === 'demo') {
@@ -331,7 +325,7 @@
                 format: 'bmp',
                 resizeAlgorithm: els.resizeAlgorithm.value,
                 sharpen: parseFloat(els.sharpen.value) || 0,
-                bwrDither: els.bwrDither.checked,
+                dither: els.dither.checked,
                 viewport: {
                     width: parseInt(els.vpW.value),
                     height: parseInt(els.vpH.value),

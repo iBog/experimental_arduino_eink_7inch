@@ -31,8 +31,8 @@ RUN npm install
 # Copy the rest of the application code with correct ownership
 COPY --chown=appuser:appuser . .
 
-# Ensure config.json exists and is writable
-RUN touch config.json && chown appuser:appuser config.json && chmod 666 config.json
+# Create data directory for persistent config
+RUN mkdir -p data && chown -R appuser:appuser data && chmod 755 data
 
 EXPOSE 3123
 
