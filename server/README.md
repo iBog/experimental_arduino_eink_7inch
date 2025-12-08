@@ -8,12 +8,27 @@
 ## English
 
 ### Description
-A Node.js API service that converts HTML content or URLs into PNG or BMP images using Puppeteer. It now supports custom output dimensions, color quantization for PNGs, and a dedicated 'weather' mode for rendering an internal `index.html` file.
+A Node.js API service that converts HTML content or URLs into PNG, BMP, or BWR (3-color e-ink) images using Puppeteer. Features include custom output dimensions, color quantization, resize algorithms, sharpening, Floyd-Steinberg dithering for e-ink displays, and a web-based configuration UI.
 
 ### Prerequisites
 - Node.js (v18 or higher recommended)
 - npm
-- Debian 12 (Bookworm) for the instructions below
+- Debian 12 (Bookworm) for native installation
+- Docker (alternative, works on any architecture)
+
+### Docker Installation (Recommended)
+
+Works on any architecture (amd64, arm64, armv7).
+
+```bash
+cd server
+docker compose build
+docker compose up -d
+```
+
+The API will be available at `http://localhost:3123`
+
+**Configuration UI:** `http://localhost:3123/config.html`
 
 ### Installation on Debian 12 (Clean Install)
 
@@ -124,19 +139,27 @@ To ensure the API starts automatically on boot and restarts on failure, set up a
    ```
    The server will start on port **3123**.
 
-2. **API Endpoint:** `POST /render`
+2. **Configuration UI:** `http://localhost:3123/config.html`
+   
+   Web interface to configure all rendering options with live preview.
+
+3. **API Endpoint:** `POST /render`
 
    **Query Parameters:**
    - `url` (optional): The URL of the page to capture.
    - `mode` (optional): Special rendering modes.
-     - `weather`: Renders the `index.html` file located in the server's `html` directory (`html/index.html`). When this mode is used, the `url` parameter and any HTML in the request body are ignored.
-   - `format` (optional): Output image format, `png` (default) or `bmp`.
+     - `weather`: Renders the `index.html` file located in the server's `html` directory.
+     - `demo`: Renders a test pattern for display calibration.
+   - `format` (optional): Output image format: `png`, `bmp`, or `bwr` (3-color e-ink).
    - `width` (optional): Output image width in pixels. Defaults to `800`.
    - `height` (optional): Output image height in pixels. Defaults to `480`.
-   - `colors` (optional): Applicable only when `format=png`. Specifies the number of colors (2-256) for color quantization, potentially reducing file size and improving performance on limited devices.
+   - `colors` (optional): For `format=png`. Number of colors (2-256) for quantization.
+   - `resizeAlgorithm` (optional): Interpolation method: `nearest`, `cubic`, `mitchell`, `lanczos2`, `lanczos3` (default).
+   - `sharpen` (optional): Sharpening amount (0-2). Helps text clarity on e-ink.
+   - `bwrDither` (optional): `true` to enable Floyd-Steinberg dithering for BWR format.
 
    **Body:**
-   - Raw HTML string (Content-Type: `text/html`). This is used only if `url` and `mode` parameters are not provided.
+   - Raw HTML string (Content-Type: `text/html`). Used only if `url` and `mode` are not provided.
 
    **Examples:**
 
@@ -170,18 +193,43 @@ To ensure the API starts automatically on boot and restarts on failure, set up a
    curl -X POST "http://localhost:3123/render?mode=weather&width=400&height=240" --output weather_png.png
    ```
 
+   *Render to BWR format for 3-color e-ink with sharpening and dithering:*
+   ```bash
+   curl -X POST "http://localhost:3123/render?url=https://example.com&format=bwr&sharpen=1&bwrDither=true" --output display.bwr
+   ```
+
+   *Render using saved config (no parameters needed):*
+   ```bash
+   curl -X POST "http://localhost:3123/render" --output output.bmp
+   ```
+
 ---
 
 <a name="russian"></a>
 ## Русский
 
 ### Описание
-API сервис на Node.js для конвертации HTML-контента или URL-адресов в изображения форматов PNG или BMP с использованием Puppeteer. Теперь поддерживает пользовательские размеры вывода, квантование цвета для PNG и специальный режим 'weather' для рендеринга внутреннего файла `index.html`.
+API сервис на Node.js для конвертации HTML-контента или URL-адресов в изображения форматов PNG, BMP или BWR (3-цветный e-ink) с использованием Puppeteer. Поддерживает пользовательские размеры, квантование цвета, алгоритмы масштабирования, резкость, дизеринг Floyd-Steinberg для e-ink дисплеев и веб-интерфейс настройки.
 
 ### Требования
 - Node.js (рекомендуется версия 18 или выше)
 - npm
-- Debian 12 (Bookworm) для инструкций ниже
+- Debian 12 (Bookworm) для нативной установки
+- Docker (альтернатива, работает на любой архитектуре)
+
+### Установка через Docker (Рекомендуется)
+
+Работает на любой архитектуре (amd64, arm64, armv7).
+
+```bash
+cd server
+docker compose build
+docker compose up -d
+```
+
+API будет доступен по адресу `http://localhost:3123`
+
+**Интерфейс настройки:** `http://localhost:3123/config.html`
 
 ### Установка на Debian 12 (с нуля)
 
@@ -292,19 +340,27 @@ API сервис на Node.js для конвертации HTML-контент�
    ```
    Сервер будет запущен на порту **3123**.
 
-2. **API Эндпоинт:** `POST /render`
+2. **Интерфейс настройки:** `http://localhost:3123/config.html`
+   
+   Веб-интерфейс для настройки всех параметров рендеринга с предпросмотром.
+
+3. **API Эндпоинт:** `POST /render`
 
    **Параметры запроса (Query Parameters):**
    - `url` (необязательно): URL страницы для захвата.
    - `mode` (необязательно): Специальные режимы рендеринга.
-     - `weather`: Рендерит файл `index.html`, расположенный в директории `html` сервера (`html/index.html`). При использовании этого режима параметр `url` и любой HTML в теле запроса игнорируются.
-   - `format` (необязательно): Формат выходного изображения, `png` (по умолчанию) или `bmp`.
-   - `width` (необязательно): Ширина выходного изображения в пикселях. По умолчанию `800`.
-   - `height` (необязательно): Высота выходного изображения в пикселях. По умолчанию `480`.
-   - `colors` (необязательно): Применимо только когда `format=png`. Указывает количество цветов (от 2 до 256) для квантования цвета, что потенциально уменьшает размер файла и повышает производительность на устройствах с ограниченными возможностями.
+     - `weather`: Рендерит файл `index.html` из директории `html` сервера.
+     - `demo`: Рендерит тестовый паттерн для калибровки дисплея.
+   - `format` (необязательно): Формат изображения: `png`, `bmp` или `bwr` (3-цветный e-ink).
+   - `width` (необязательно): Ширина изображения в пикселях. По умолчанию `800`.
+   - `height` (необязательно): Высота изображения в пикселях. По умолчанию `480`.
+   - `colors` (необязательно): Для `format=png`. Количество цветов (2-256) для квантования.
+   - `resizeAlgorithm` (необязательно): Метод интерполяции: `nearest`, `cubic`, `mitchell`, `lanczos2`, `lanczos3` (по умолчанию).
+   - `sharpen` (необязательно): Уровень резкости (0-2). Улучшает читаемость текста на e-ink.
+   - `bwrDither` (необязательно): `true` для включения дизеринга Floyd-Steinberg для BWR формата.
 
    **Тело запроса (Body):**
-   - Строка HTML (Content-Type: `text/html`). Используется только если параметры `url` и `mode` не указаны.
+   - Строка HTML (Content-Type: `text/html`). Используется только если `url` и `mode` не указаны.
 
    **Примеры:**
 
@@ -336,4 +392,14 @@ API сервис на Node.js для конвертации HTML-контент�
    *Рендер в режиме weather (внутренний `html/index.html`) в PNG с пользовательскими размерами:*
    ```bash
    curl -X POST "http://localhost:3123/render?mode=weather&width=400&height=240" --output weather_png.png
+   ```
+
+   *Рендер в BWR формат для 3-цветного e-ink с резкостью и дизерингом:*
+   ```bash
+   curl -X POST "http://localhost:3123/render?url=https://example.com&format=bwr&sharpen=1&bwrDither=true" --output display.bwr
+   ```
+
+   *Рендер с использованием сохранённой конфигурации (параметры не нужны):*
+   ```bash
+   curl -X POST "http://localhost:3123/render" --output output.bmp
    ```

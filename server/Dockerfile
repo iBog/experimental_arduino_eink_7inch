@@ -1,8 +1,7 @@
-# Use the official Node.js image with Debian Bookworm (Slim version for minimal size)
+# Universal Dockerfile for all architectures (amd64, arm64, etc.)
 FROM node:22-bookworm-slim
 
-# Install Chromium and fonts to support major charsets
-# Chromium is used here for ARM64 support as google-chrome-stable is amd64 only
+# Install Chromium (multi-arch) and fonts to support major charsets
 RUN apt-get update \
     && apt-get install -y wget gnupg curl \
     && apt-get install -y chromium fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
@@ -21,7 +20,6 @@ RUN groupadd -r appuser && useradd -r -g appuser -G audio,video appuser \
 
 # Set the working directory
 WORKDIR /app
-# Grant appuser ownership of the working directory
 RUN chown -R appuser:appuser /app
 
 # Copy package files first with correct ownership
@@ -33,14 +31,10 @@ RUN npm install
 # Copy the rest of the application code with correct ownership
 COPY --chown=appuser:appuser . .
 
-# Ensure config.json exists and is writable by everyone
+# Ensure config.json exists and is writable
 RUN touch config.json && chown appuser:appuser config.json && chmod 666 config.json
 
-# Expose the application port
 EXPOSE 3123
 
-# Switch to the non-root user
-# USER appuser
-
-# Run the application
 CMD ["node", "server.js"]
+
