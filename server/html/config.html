@@ -249,7 +249,12 @@
                 const tw = els.timestampWatermark.checked;
                 
                 const rc = els.removeClasses.value.trim();
-                let query = `width=${w}&height=${h}&layoutWidth=${lw}&dismissCookies=${dc}&timestampWatermark=${tw}`;
+                const cropX = els.cropX.value;
+                const cropY = els.cropY.value;
+                const cropW = els.cropW.value;
+                const cropH = els.cropH.value;
+                
+                let query = `width=${w}&height=${h}&layoutWidth=${lw}&dismissCookies=${dc}&timestampWatermark=${tw}&cropX=${cropX}&cropY=${cropY}&cropW=${cropW}&cropH=${cropH}`;
                 if (mode === 'weather') {
                     query += '&mode=weather&url=internal';
                 } else if (mode === 'demo') {
@@ -417,3 +422,37 @@
         window.addEventListener('mouseup', handleEnd);
 
         // Touch events
+        els.cropBox.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            if (e.target.classList.contains('handle')) {
+                e.preventDefault();
+                handleStart(touch.clientX, touch.clientY, 'resize');
+            } else {
+                e.preventDefault();
+                handleStart(touch.clientX, touch.clientY, 'move');
+            }
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (isDragging || isResizing) {
+                e.preventDefault();
+                const touch = e.touches[0];
+                handleMove(touch.clientX, touch.clientY);
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchend', handleEnd);
+
+        // Button event listeners
+        els.btnPreview.addEventListener('click', loadPreview);
+        els.btnSave.addEventListener('click', saveConfig);
+        els.modeSelect.addEventListener('change', toggleMode);
+
+        // Update crop visuals on window resize
+        window.addEventListener('resize', updateCropBoxVisuals);
+
+        // Initialize
+        loadConfig();
+    </script>
+</body>
+</html>

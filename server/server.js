@@ -139,7 +139,8 @@ async function tryToDismissCookies(page) {
 }
 
 // Helper to add timestamp watermark
-async function addTimestampWatermark(imagePath, timezoneOffset = 3) {
+// cropBounds: optional {x, y, width, height} to position watermark relative to crop area
+async function addTimestampWatermark(imagePath, timezoneOffset = 3, cropBounds = null) {
     try {
         console.log(`Adding timestamp watermark with GMT+${timezoneOffset} offset`);
         
@@ -152,38 +153,44 @@ async function addTimestampWatermark(imagePath, timezoneOffset = 3) {
         const offsetMillis = timezoneOffset * 60 * 60 * 1000;
         const localTime = new Date(now.getTime() + offsetMillis);
         
-        // Format date and time
+        // Format date and time (without timezone)
         const dateStr = localTime.toISOString().split('T')[0]; // YYYY-MM-DD
         const timeStr = localTime.toISOString().split('T')[1].split('.')[0]; // HH:MM:SS
+        const timestamp = `${dateStr} ${timeStr}`;
         
-        const timestamp = `${dateStr} ${timeStr} GMT+${timezoneOffset}`;
+        // Load a larger/bolder font for e-ink readability
+        const font = await Jimp.loadFont(Jimp.FONT_SANS_14_BLACK);
         
-        // Load a font (Jimp has built-in fonts)
-        const font = await Jimp.loadFont(Jimp.FONT_SANS_10_BLACK);
-        
-        // Calculate position (left bottom corner)
+        // Calculate text dimensions
         const textWidth = Jimp.measureText(font, timestamp);
-        const textHeight = Jimp.measureTextHeight(font, timestamp);
-        const margin = 5;
-        const x = margin;
-        const y = image.bitmap.height - textHeight - margin;
+        const textHeight = 14; // Fixed height for consistent positioning
+        const paddingH = 4; // Horizontal padding
+        const paddingV = 2; // Vertical padding
+        const boxWidth = textWidth + paddingH * 2;
+        const boxHeight = textHeight + paddingV * 2;
         
-        // Draw semi-transparent background for better readability
-        const bgColor = 0xFFFFFFFF; // White
-        const bgOpacity = 0.7; // 70% opaque
-        image.scan(x - 2, y - 1, textWidth + 4, textHeight + 2, function(x, y, idx) {
-            const currentR = this.bitmap.data[idx];
-            const currentG = this.bitmap.data[idx + 1];
-            const currentB = this.bitmap.data[idx + 2];
-            
-            // Blend white background with current pixel
-            this.bitmap.data[idx] = Math.round(bgColor * bgOpacity + currentR * (1 - bgOpacity));
-            this.bitmap.data[idx + 1] = Math.round(bgColor * bgOpacity + currentG * (1 - bgOpacity));
-            this.bitmap.data[idx + 2] = Math.round(bgColor * bgOpacity + currentB * (1 - bgOpacity));
+        let boxX, boxY;
+        if (cropBounds) {
+            // Position at bottom-left corner of crop area (flush to corner)
+            boxX = cropBounds.x;
+            boxY = cropBounds.y + cropBounds.height - boxHeight;
+        } else {
+            // Position at bottom-left corner of full image
+            boxX = 0;
+            boxY = image.bitmap.height - boxHeight;
+        }
+        
+        // Draw solid white background
+        image.scan(boxX, boxY, boxWidth, boxHeight, function(px, py, idx) {
+            this.bitmap.data[idx] = 255;     // R
+            this.bitmap.data[idx + 1] = 255; // G
+            this.bitmap.data[idx + 2] = 255; // B
         });
         
         // Draw timestamp text
-        image.print(font, x, y, timestamp);
+        const textX = boxX + paddingH;
+        const textY = boxY + paddingV;
+        image.print(font, textX, textY, timestamp);
         
         // Save the image
         await image.writeAsync(imagePath);
@@ -330,8 +337,17 @@ app.get('/preview', async (req, res) => {
             const tempPath = path.join(__dirname, `preview_temp_${Date.now()}.png`);
             fs.writeFileSync(tempPath, screenshotBuffer);
             
-            // Add watermark
-            await addTimestampWatermark(tempPath, 3);
+            // Get crop bounds from query params for correct watermark positioning
+            const cropX = parseInt(req.query.cropX);
+            const cropY = parseInt(req.query.cropY);
+            const cropW = parseInt(req.query.cropW);
+            const cropH = parseInt(req.query.cropH);
+            const cropBounds = (!isNaN(cropX) && !isNaN(cropY) && !isNaN(cropW) && !isNaN(cropH)) 
+                ? { x: cropX, y: cropY, width: cropW, height: cropH } 
+                : null;
+            
+            // Add watermark positioned within crop area
+            await addTimestampWatermark(tempPath, 3, cropBounds);
             
             // Read back the watermarked image
             const watermarkedBuffer = fs.readFileSync(tempPath);
