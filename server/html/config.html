@@ -106,6 +106,31 @@
             <input type="number" id="crop-h" style="width: 50px; background: #eee;" readonly title="Height (locked)">
         </div>
         <div class="row">
+            <label>Resize Algorithm:</label>
+            <select id="resize-algorithm">
+                <option value="lanczos3">Lanczos3 (Default, smooth)</option>
+                <option value="lanczos2">Lanczos2 (Faster, smooth)</option>
+                <option value="mitchell">Mitchell (Balanced)</option>
+                <option value="cubic">Cubic (Soft)</option>
+                <option value="nearest">Nearest (Sharp edges, pixelated)</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Sharpen:</label>
+            <select id="sharpen">
+                <option value="0">Off</option>
+                <option value="0.5">Light (0.5)</option>
+                <option value="1">Medium (1.0)</option>
+                <option value="1.5">Strong (1.5)</option>
+                <option value="2">Extra (2.0)</option>
+            </select>
+            <span style="color: #666; font-size: 12px;">Improves text clarity</span>
+        </div>
+        <div class="row">
+            <input type="checkbox" id="bwr-dither">
+            <label for="bwr-dither">BWR Dithering (Floyd-Steinberg) - better gradients on e-ink</label>
+        </div>
+        <div class="row">
             <label>Format:</label>
             <span>BMP (Fixed)</span>
         </div>
@@ -147,7 +172,10 @@
             previewContainer: document.getElementById('preview-container'),
             previewImg: document.getElementById('preview-img'),
             cropBox: document.getElementById('crop-box'),
-            status: document.getElementById('status')
+            status: document.getElementById('status'),
+            resizeAlgorithm: document.getElementById('resize-algorithm'),
+            sharpen: document.getElementById('sharpen'),
+            bwrDither: document.getElementById('bwr-dither')
         };
 
         const CROP_ASPECT = 800 / 480; // Fixed aspect ratio 1.6667
@@ -188,6 +216,9 @@
                 els.layoutW.value = currentConfig.viewport?.layoutWidth || currentConfig.viewport?.width || 800;
                 els.dismissCookies.checked = !!currentConfig.dismissCookies;
                 els.timestampWatermark.checked = !!currentConfig.timestampWatermark;
+                els.resizeAlgorithm.value = currentConfig.resizeAlgorithm || 'lanczos3';
+                els.sharpen.value = currentConfig.sharpen || '0';
+                els.bwrDither.checked = !!currentConfig.bwrDither;
                 
                 updateCropInputs(
                     currentConfig.crop?.x || 0,
@@ -298,6 +329,9 @@
                 dismissCookies: els.dismissCookies.checked,
                 timestampWatermark: els.timestampWatermark.checked,
                 format: 'bmp',
+                resizeAlgorithm: els.resizeAlgorithm.value,
+                sharpen: parseFloat(els.sharpen.value) || 0,
+                bwrDither: els.bwrDither.checked,
                 viewport: {
                     width: parseInt(els.vpW.value),
                     height: parseInt(els.vpH.value),

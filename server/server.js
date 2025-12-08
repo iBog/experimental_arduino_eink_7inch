@@ -20,6 +20,9 @@ const DEFAULT_CONFIG = {
   dismissCookies: false,
   timestampWatermark: false,
   format: 'bmp',
+  resizeAlgorithm: 'lanczos3',
+  sharpen: 0,
+  bwrDither: false,
   viewport: { width: 800, height: 480, layoutWidth: 800 },
   crop: { x: 0, y: 0, width: 800, height: 480 }
 };
@@ -539,10 +542,26 @@ app.post('/render', async (req, res) => {
     const OUTPUT_WIDTH = 800;
     const OUTPUT_HEIGHT = 480;
     const resizedPath = path.join(__dirname, `${baseName}_resized.png`);
-    console.log(`Resizing cropped image to ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}`);
-    await sharp(pngPath)
-      .resize(OUTPUT_WIDTH, OUTPUT_HEIGHT, { fit: 'fill' })
-      .toFile(resizedPath);
+    
+    // Get resize algorithm from config or query
+    const resizeAlgorithm = req.query.resizeAlgorithm || (useConfig ? config.resizeAlgorithm : 'lanczos3') || 'lanczos3';
+    const validKernels = ['nearest', 'cubic', 'mitchell', 'lanczos2', 'lanczos3'];
+    const kernel = validKernels.includes(resizeAlgorithm) ? resizeAlgorithm : 'lanczos3';
+    
+    // Get sharpen amount (0 = off, 1-3 recommended for e-ink)
+    const sharpen = parseFloat(req.query.sharpen) || (useConfig ? config.sharpen : 0) || 0;
+    
+    console.log(`Resizing cropped image to ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT} using ${kernel} algorithm, sharpen: ${sharpen}`);
+    
+    let sharpPipeline = sharp(pngPath)
+      .resize(OUTPUT_WIDTH, OUTPUT_HEIGHT, { fit: 'fill', kernel: kernel });
+    
+    // Apply sharpening if enabled (helps text on e-ink)
+    if (sharpen > 0) {
+      sharpPipeline = sharpPipeline.sharpen({ sigma: sharpen });
+    }
+    
+    await sharpPipeline.toFile(resizedPath);
     fs.unlinkSync(pngPath);
     
     // Add timestamp watermark if enabled
@@ -561,6 +580,9 @@ app.post('/render', async (req, res) => {
       // Packing: 1 bit per pixel, 8 pixels per byte, MSB first.
       // Logic: 0 = Active (Black or Red), 1 = Inactive (White or No Red)
       
+      const bwrDither = (req.query.bwrDither === 'true') || (useConfig ? !!config.bwrDither : false);
+      console.log(`BWR conversion with dithering: ${bwrDither}`);
+      
       const { data, info } = await sharp(resizedPath)
         .ensureAlpha()
         .raw()
@@ -574,30 +596,69 @@ app.post('/render', async (req, res) => {
       // Initialize buffers with 0xFF (All 1s -> White / No Red)
       const bwBuffer = Buffer.alloc(planeSize, 0xFF);
       const redBuffer = Buffer.alloc(planeSize, 0xFF);
+      
+      // For dithering, we need float buffers to accumulate error
+      const pixels = new Float32Array(w * h * 3); // RGB only
+      for (let i = 0; i < w * h; i++) {
+        pixels[i * 3] = data[i * 4];
+        pixels[i * 3 + 1] = data[i * 4 + 1];
+        pixels[i * 3 + 2] = data[i * 4 + 2];
+      }
+      
+      // Floyd-Steinberg dithering distribution
+      const distributeError = (x, y, errR, errG, errB) => {
+        const offsets = [
+          [1, 0, 7/16],
+          [-1, 1, 3/16],
+          [0, 1, 5/16],
+          [1, 1, 1/16]
+        ];
+        for (const [dx, dy, factor] of offsets) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && nx < w && ny < h) {
+            const nidx = (ny * w + nx) * 3;
+            pixels[nidx] += errR * factor;
+            pixels[nidx + 1] += errG * factor;
+            pixels[nidx + 2] += errB * factor;
+          }
+        }
+      };
 
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-          const idx = (y * w + x) * 4; // RGBA
-          const r = data[idx];
-          const g = data[idx + 1];
-          const b = data[idx + 2];
+          const pidx = (y * w + x) * 3;
+          const r = Math.max(0, Math.min(255, pixels[pidx]));
+          const g = Math.max(0, Math.min(255, pixels[pidx + 1]));
+          const b = Math.max(0, Math.min(255, pixels[pidx + 2]));
           
           // Calculate squared euclidean distance to palette colors
           const distBlack = r*r + g*g + b*b;
           const distWhite = (r-255)**2 + (g-255)**2 + (b-255)**2;
           const distRed   = (r-255)**2 + g*g + b*b;
 
+          let chosenR, chosenG, chosenB;
           let isBlack = false;
           let isRed = false;
 
           // Determine closest color
           if (distRed < distBlack && distRed < distWhite) {
             isRed = true;
+            chosenR = 255; chosenG = 0; chosenB = 0;
           } else if (distBlack <= distWhite) {
-             // Prefer black over white if equidistant? Usually distBlack < distWhite is enough.
-             isBlack = true;
+            isBlack = true;
+            chosenR = 0; chosenG = 0; chosenB = 0;
+          } else {
+            chosenR = 255; chosenG = 255; chosenB = 255;
           }
-          // else White
+          
+          // Apply Floyd-Steinberg dithering if enabled
+          if (bwrDither) {
+            const errR = r - chosenR;
+            const errG = g - chosenG;
+            const errB = b - chosenB;
+            distributeError(x, y, errR, errG, errB);
+          }
 
           const byteIdx = y * stride + Math.floor(x / 8);
           const bitMask = 0x80 >> (x % 8);
